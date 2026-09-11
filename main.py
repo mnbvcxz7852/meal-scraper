@@ -1,124 +1,154 @@
 import os
 import time
+import re
+import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
+def send_line_push(text):
+    """發送訊息至指定 LINE 個人或群組"""
+    token = os.getenv("LINE_CHANNEL_TOKEN")
+    target_id = os.getenv("LINE_TARGET_ID")
+    
+    if not token or not target_id:
+        print("[推播略過] 未設定 LINE_CHANNEL_TOKEN 或 LINE_TARGET_ID")
+        return
+
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+    payload = {
+        "to": target_id,
+        "messages": [{"type": "text", "text": text}]
+    }
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=10)
+        if res.status_code == 200:
+            print(f"[LINE 推播成功] 訊息已發送至群組/用戶 {target_id}")
+        else:
+            print(f"[LINE 推播失敗] 狀態碼: {res.status_code}, 原因: {res.text}")
+    except Exception as e:
+        print(f"[LINE 推播異常]: {e}")
+
+def check_available_noodles(driver):
+    """切換至麵食並比對是否有非 0 的剩餘名額"""
+    noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
+    for tab in noodle_tabs:
+        if tab.is_displayed():
+            try:
+                driver.execute_script("arguments[0].click();", tab)
+            except Exception:
+                pass
+            break
+    time.sleep(2)
+
+    body_text = driver.find_element(By.TAG_NAME, "body").text
+    lines = [line.strip() for line in body_text.split("\n") if line.strip()]
+
+    capture = False
+    available_list = []
+    
+    for line in lines:
+        if "菜名" in line or "數量" in line:
+            capture = True
+            continue
+        if capture:
+            if any(kw in line for kw in ["確定", "送出", "取消", "注意事項", "Copyright", "SAG", "Hand-crafted"]):
+                break
+
+            cleaned = line.replace("∞", "").strip()
+            match = re.search(r'(\d+)\s*$', cleaned)
+            if match:
+                quota = int(match.group(1))
+                meal_name = cleaned[:match.start()].strip()
+                if quota > 0:
+                    available_list.append(f"🍜 {meal_name} (剩餘: {quota})")
+            else:
+                if " 0" not in cleaned and any(char in cleaned for char in ["麵", "粥", "粉"]):
+                    available_list.append(f"🍜 {cleaned}")
+
+    return available_list
+
 def main():
     username = os.getenv("EIP_USER")
     password = os.getenv("EIP_PASS")
 
     if not username or not password:
-        print("錯誤：未讀取到 EIP_USER 或 EIP_PASS，請確認 GitHub Secrets 設定。")
+        print("錯誤：未讀取到帳號密碼，請確認 GitHub Secrets 設定。")
         return
 
-    # 設定無頭 Chrome
+    # 先發一則群組測試通知，確認 LINE 連線正常
+    send_line_push("🟢 【訂餐監控系統】已在雲端啟動，開始巡檢麵食退訂名額...")
+
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1280,800")
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
     try:
-        # 1. 前往登入頁面
+        # 1. 登入
         login_url = "https://eip2.sag.tw/SAGWeb/pages/authentication/login-v1"
-        print("正在前往登入頁面...")
         driver.get(login_url)
         time.sleep(3)
 
-        # 2. 自動輸入帳號密碼
         user_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[name*='user'], input[id*='user']")
         if user_inputs:
             user_inputs[0].send_keys(username)
-
         pass_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
         if pass_inputs:
             pass_inputs[0].send_keys(password)
 
-        # 3. 點擊登入
         buttons = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button, input[type='submit']")
         for btn in buttons:
-            txt = btn.text.strip()
-            if "登入" in txt or "Login" in txt or btn.get_attribute("type") == "submit":
+            if any(w in btn.text for w in ["登入", "Login"]) or btn.get_attribute("type") == "submit":
                 btn.click()
                 break
-
         time.sleep(5)
 
-        # 4. 前往訂餐頁面
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("前往訂餐頁面...")
-        driver.get(meal_url)
-        time.sleep(4)
+        print(f"登入成功，開始高頻巡檢: {meal_url}")
 
-        # 5. 點擊「麵食」標籤/按鈕
-        print("嘗試切換至【麵食】...")
-        # 尋找包含「麵食」文字的元素 (可能是 div, a, span, button 等)
-        noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
-        clicked = False
-        for tab in noodle_tabs:
-            if tab.is_displayed():
-                try:
-                    tab.click()
-                    clicked = True
-                    print("已點擊【麵食】分頁")
-                    break
-                except Exception:
-                    # 若被其他元素阻擋，改用 JavaScript 直接觸發點擊
-                    driver.execute_script("arguments[0].click();", tab)
-                    clicked = True
-                    print("透過 JS 點擊【麵食】分頁")
-                    break
+        # 2. 進行 40 次檢查 (約 10~15 分鐘，每 15 秒一次)
+        max_checks = 40
+        check_interval = 15
 
-        if not clicked:
-            print("警告：未找到【麵食】分頁按鈕，將讀取當前預設內容")
+        for i in range(1, max_checks + 1):
+            now_str = time.strftime("%H:%M:%S")
+            driver.get(meal_url)
+            time.sleep(3)
 
-        time.sleep(3)
+            available = check_available_noodles(driver)
+            if available:
+                alert_text = (
+                    f"【🔥 麵食名額釋出通知！】\n"
+                    f"時間：{now_str}\n"
+                    f"釋出項目：\n" + "\n".join(available) + "\n\n"
+                    f"👉 請盡快開啟網頁訂餐：\n{meal_url}"
+                )
+                print(alert_text)
+                driver.save_screenshot("screenshot_available.png")
+                send_line_push(alert_text)
+                print("通知已發送，結束本次任務。")
+                break
+            else:
+                print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：暫無名額。")
 
-        # 6. 截圖存檔 (驗證是否成功切到麵食)
-        driver.save_screenshot("screenshot_noodle.png")
-
-        # 7. 取得並解析畫面文字
-        body_text = driver.find_element(By.TAG_NAME, "body").text
-        lines = [line.strip() for line in body_text.split("\n") if line.strip()]
-
-        print("\n" + "="*40)
-        print("           【 今日麵食餐點 】")
-        print("="*40)
-
-        # 擷取「菜名」或「數量」之後出現的項目
-        noodle_items = []
-        capture = False
-        for line in lines:
-            if "菜名" in line or "數量" in line:
-                capture = True
-                continue
-            if capture:
-                # 排除可能出現的頁尾或按鈕文字
-                if any(kw in line for kw in ["確定", "送出", "取消", "注意事項", "Copyright", "SAG"]):
-                    break
-                # 去除特殊符號
-                cleaned = line.replace("∞", "").strip()
-                if cleaned and not cleaned.isdigit():
-                    noodle_items.append(cleaned)
-
-        if noodle_items:
-            for idx, item in enumerate(noodle_items, 1):
-                print(f"{idx}. {item}")
-        else:
-            print("未找到菜單清單，完整文字預覽如下：")
-            print("\n".join(lines[25:50]))
-        print("="*40 + "\n")
+            time.sleep(check_interval)
 
     except Exception as e:
-        print(f"執行異常: {e}")
+        print(f"監控異常: {e}")
+        send_line_push(f"⚠️ 訂餐監控異常報錯: {e}")
     finally:
         driver.quit()
 
