@@ -1,11 +1,15 @@
 name: Run Meal Scraper
 
 on:
+  schedule:
+    # 每 5 小時啟動一次無縫巡檢 (UTC 時間)
+    - cron: '0 0,5,10,15,20 * * *'
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 340
 
     steps:
       - name: 簽出程式碼
@@ -28,11 +32,3 @@ jobs:
           LINE_TARGET_ID: ${{ secrets.LINE_TARGET_ID }}
         run: |
           python main.py
-
-      - name: 上傳畫面截圖
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: page-screenshot
-          path: screenshot_*.png
-          if-no-files-found: ignore
