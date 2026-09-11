@@ -66,7 +66,7 @@ def check_available_noodles(driver):
             if match:
                 quota = int(match.group(1))
                 meal_name = cleaned[:match.start()].strip()
-                if quota >= 0:
+                if quota > 0:
                     available_list.append(f"🍜 {meal_name} (剩餘: {quota})")
             else:
                 if " 0" not in cleaned and any(char in cleaned for char in ["麵", "粥", "粉"]):
@@ -82,7 +82,7 @@ def main():
         print("錯誤：未讀取到帳號密碼，請確認 GitHub Secrets 設定。")
         return
 
-    # 先發一則群組測試通知，確認 LINE 連線正常
+    # 先發一則群組測試通知，確認 LINE 連線正常（若不想每次執行都被提醒，可將此行註解）
     send_line_push("🟢 【訂餐監控系統】已在雲端啟動，開始巡檢麵食退訂名額...")
 
     chrome_options = Options()
@@ -122,6 +122,7 @@ def main():
         # 2. 進行 40 次檢查 (約 10~15 分鐘，每 15 秒一次)
         max_checks = 40
         check_interval = 15
+        last_notified_items = set()
 
         for i in range(1, max_checks + 1):
             now_str = time.strftime("%H:%M:%S")
@@ -129,7 +130,10 @@ def main():
             time.sleep(3)
 
             available = check_available_noodles(driver)
-            if available:
+            current_set = set(available)
+
+            # 偵測到名額且與上次通知名單不同時觸發通知
+            if available and current_set != last_notified_items:
                 alert_text = (
                     f"【🔥 麵食名額釋出通知！】\n"
                     f"時間：{now_str}\n"
@@ -139,10 +143,15 @@ def main():
                 print(alert_text)
                 driver.save_screenshot("screenshot_available.png")
                 send_line_push(alert_text)
-                print("通知已發送，結束本次任務。")
-                break
-            else:
+                last_notified_items = current_set
+                print("通知已送出，繼續執行後續監控...")
+
+            elif not available:
+                # 庫存歸零或被搶光時重置記錄
+                last_notified_items = set()
                 print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：暫無名額。")
+            else:
+                print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：名額未變更，略過重複推播。")
 
             time.sleep(check_interval)
 
