@@ -1,66 +1,80 @@
 import os
-import asyncio
-from playwright.async_api import async_playwright
+import time
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
 
-async def main():
+def main():
     username = os.getenv("EIP_USER")
     password = os.getenv("EIP_PASS")
 
     if not username or not password:
-        print("錯誤：未讀取到 EIP_USER 或 EIP_PASS 環境變數，請確認 GitHub Secrets 設定。")
+        print("錯誤：未讀取到 EIP_USER 或 EIP_PASS，請確認 GitHub Secrets 設定。")
         return
 
-    async with async_playwright() as p:
-        print("啟動背景瀏覽器...")
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800}
-        )
-        page = await context.new_page()
+    # 設定無頭 Chrome (完全在背景執行)
+    chrome_options = Options()
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1280,800")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-        # 1. 前往登入頁面
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+
+    try:
+        # 1. 前往登入頁
         login_url = "https://eip2.sag.tw/SAGWeb/pages/authentication/login-v1"
         print(f"前往登入頁: {login_url}")
-        await page.goto(login_url, wait_until="networkidle", timeout=30000)
-        await page.wait_for_timeout(2000)
+        driver.get(login_url)
+        time.sleep(3)
 
-        # 2. 自動偵測並輸入帳號、密碼
-        print("正在填入登入資訊...")
-        # 尋找輸入框 (依序嘗試常見的 input 屬性)
-        user_input = page.locator("input[type='text'], input[name*='user'], input[id*='user'], input[placeholder*='帳號']").first
-        await user_input.fill(username)
+        # 2. 自動尋找帳號、密碼欄位並輸入
+        print("正在輸入帳號密碼...")
+        user_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[name*='user'], input[id*='user']")
+        if user_inputs:
+            user_inputs[0].send_keys(username)
 
-        pass_input = page.locator("input[type='password']").first
-        await pass_input.fill(password)
+        pass_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
+        if pass_inputs:
+            pass_inputs[0].send_keys(password)
 
         # 3. 點擊登入按鈕
-        print("送出登入...")
-        login_btn = page.locator("button[type='submit'], button:has-text('登入'), button:has-text('Login'), input[type='submit']").first
-        await login_btn.click()
+        print("點擊登入按鈕...")
+        buttons = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button, input[type='submit']")
+        for btn in buttons:
+            txt = btn.text.strip()
+            if "登入" in txt or "Login" in txt or btn.get_attribute("type") == "submit":
+                btn.click()
+                break
 
-        # 4. 等待登入跳轉
-        await page.wait_for_timeout(5000)
-        await page.wait_for_load_state("networkidle")
+        time.sleep(5)
 
-        # 5. 直接前往點餐系統頁面
+        # 4. 前往點餐頁面
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
         print(f"前往點餐系統: {meal_url}")
-        await page.goto(meal_url, wait_until="networkidle", timeout=30000)
-        await page.wait_for_timeout(3000)
+        driver.get(meal_url)
+        time.sleep(5)
 
-        print(f"當前停留網址: {page.url}")
+        print(f"當前停留網址: {driver.current_url}")
 
-        # 6. 截圖存檔以便確認是否成功登入進入點餐畫面
-        await page.screenshot(path="screenshot_meal.png", full_page=True)
-        print("已儲存點餐畫面截圖: screenshot_meal.png")
+        # 5. 儲存截圖
+        driver.save_screenshot("screenshot_meal.png")
+        print("已成功儲存畫面截圖: screenshot_meal.png")
 
-        # 印出前 500 個字元以供檢視文字
-        body_text = await page.inner_text("body")
+        # 6. 印出畫面文字
+        body_text = driver.find_element(By.TAG_NAME, "body").text
         print("【點餐頁面文字預覽】：")
         print(body_text[:500])
 
-        await browser.close()
+    except Exception as e:
+        print(f"執行過程發生異常: {e}")
+    finally:
+        driver.quit()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
