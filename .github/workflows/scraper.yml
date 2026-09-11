@@ -1,7 +1,7 @@
 name: Run Meal Scraper
 
 on:
-  workflow_dispatch: # 支援在網頁上手動點擊執行測試
+  workflow_dispatch: # 手動測試
 
 jobs:
   scrape:
@@ -16,10 +16,21 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 安裝相依套件
+      - name: 安裝相依套件與 Playwright 瀏覽器
         run: |
           pip install -r requirements.txt
+          playwright install chromium --with-deps
 
-      - name: 執行測試抓取
+      - name: 執行登入與訂餐頁面抓取
+        env:
+          EIP_USER: ${{ secrets.EIP_USER }}
+          EIP_PASS: ${{ secrets.EIP_PASS }}
         run: |
           python main.py
+
+      - name: 上傳畫面截圖 (確認登入與訂餐結果)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: page-screenshot
+          path: screenshot_*.png
