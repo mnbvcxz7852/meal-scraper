@@ -1,7 +1,7 @@
 name: Run Meal Scraper
 
 on:
-  workflow_dispatch: # 手動測試
+  workflow_dispatch:
 
 jobs:
   scrape:
@@ -18,8 +18,9 @@ jobs:
 
       - name: 安裝相依套件與 Playwright 瀏覽器
         run: |
-          pip install -r requirements.txt
-          playwright install chromium --with-deps
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
 
       - name: 執行登入與訂餐頁面抓取
         env:
@@ -34,3 +35,4 @@ jobs:
         with:
           name: page-screenshot
           path: screenshot_*.png
+          if-no-files-found: ignore
