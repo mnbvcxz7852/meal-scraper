@@ -20,10 +20,12 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: 執行登入與訂餐頁面抓取
+      - name: 執行高頻名額監控
         env:
           EIP_USER: ${{ secrets.EIP_USER }}
           EIP_PASS: ${{ secrets.EIP_PASS }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_TARGET_ID: ${{ secrets.LINE_TARGET_ID }}
         run: |
           python main.py
 
