@@ -16,11 +16,15 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 安裝相依套件與 Playwright 瀏覽器
+      - name: 安裝 Python 套件
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m playwright install --with-deps chromium
+          pip install -r requirements.txt
+
+      - name: 安裝 Playwright 瀏覽器與系統核心依賴
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
 
       - name: 執行登入與訂餐頁面抓取
         env:
