@@ -66,7 +66,7 @@ def check_available_noodles(driver):
             if match:
                 quota = int(match.group(1))
                 meal_name = cleaned[:match.start()].strip()
-                if quota > 0:
+                if quota >= 0:
                     available_list.append(f"🍜 {meal_name} (剩餘: {quota})")
             else:
                 if " 0" not in cleaned and any(char in cleaned for char in ["麵", "粥", "粉"]):
