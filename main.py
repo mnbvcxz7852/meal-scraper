@@ -35,6 +35,29 @@ def send_line_push(text):
     except Exception as e:
         print(f"[LINE 推播異常]: {e}")
 
+def login_eip(driver, username, password):
+    """登入 EIP 系統"""
+    login_url = "https://eip2.sag.tw/SAGWeb/pages/authentication/login-v1"
+    driver.get(login_url)
+    time.sleep(3)
+
+    user_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[name*='user'], input[id*='user']")
+    if user_inputs:
+        user_inputs[0].clear()
+        user_inputs[0].send_keys(username)
+
+    pass_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
+    if pass_inputs:
+        pass_inputs[0].clear()
+        pass_inputs[0].send_keys(password)
+
+    buttons = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button, input[type='submit']")
+    for btn in buttons:
+        if any(w in btn.text for w in ["登入", "Login"]) or btn.get_attribute("type") == "submit":
+            btn.click()
+            break
+    time.sleep(5)
+
 def check_available_noodles(driver):
     """切換至麵食並比對是否有非 0 的剩餘名額"""
     noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
@@ -82,7 +105,7 @@ def main():
         print("錯誤：未讀取到帳號密碼，請確認 GitHub Secrets 設定。")
         return
 
-    # 先發一則群組測試通知，確認 LINE 連線正常（若不想每次執行都被提醒，可將此行註解）
+    # 若每 4 小時啟動一次不想被頻繁打擾，可將下面這行開頭加 # 註解掉
     send_line_push("🟢 【訂餐監控系統】已在雲端啟動，開始巡檢麵食退訂名額...")
 
     chrome_options = Options()
@@ -97,24 +120,8 @@ def main():
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
     try:
-        # 1. 登入
-        login_url = "https://eip2.sag.tw/SAGWeb/pages/authentication/login-v1"
-        driver.get(login_url)
-        time.sleep(3)
-
-        user_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[name*='user'], input[id*='user']")
-        if user_inputs:
-            user_inputs[0].send_keys(username)
-        pass_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
-        if pass_inputs:
-            pass_inputs[0].send_keys(password)
-
-        buttons = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button, input[type='submit']")
-        for btn in buttons:
-            if any(w in btn.text for w in ["登入", "Login"]) or btn.get_attribute("type") == "submit":
-                btn.click()
-                break
-        time.sleep(5)
+        # 初次登入
+        login_eip(driver, username, password)
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
         print(f"登入成功，開始高頻巡檢: {meal_url}")
@@ -123,12 +130,18 @@ def main():
         max_checks = 730
         check_interval = 15
         last_notified_items = set()
-        
 
         for i in range(1, max_checks + 1):
             now_str = time.strftime("%H:%M:%S")
             driver.get(meal_url)
             time.sleep(3)
+
+            # 防呆保護：若 Session 逾時被踢回登入頁，自動補登入
+            if "login" in driver.current_url.lower():
+                print(f"[{now_str}] 偵測到 Session 過期，自動重新登入中...")
+                login_eip(driver, username, password)
+                driver.get(meal_url)
+                time.sleep(3)
 
             available = check_available_noodles(driver)
             current_set = set(available)
@@ -150,9 +163,11 @@ def main():
             elif not available:
                 # 庫存歸零或被搶光時重置記錄
                 last_notified_items = set()
-                print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：暫無名額。")
+                if i % 10 == 0:
+                    print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：暫無名額。")
             else:
-                print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：名額未變更，略過重複推播。")
+                if i % 10 == 0:
+                    print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：名額未變更，略過重複推播。")
 
             time.sleep(check_interval)
 
