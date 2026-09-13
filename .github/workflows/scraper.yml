@@ -2,14 +2,15 @@ name: Run Meal Scraper
 
 on:
   schedule:
-    # 每 5 小時啟動一次無縫巡檢 (UTC 時間)
-    - cron: '0 0,5,10,15,20 * * *'
+    # 每 4 小時無縫循環一輪 (UTC 時間 0, 4, 8, 12, 16, 20)
+    # 對應台灣時間: 04:00, 08:00, 12:00, 16:00, 20:00, 24:00
+    - cron: '0 0,4,8,12,16,20 * * *'
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 340
+    timeout-minutes: 270 # 限制單次最長 4.5 小時，足夠讓上一輪安全結束
 
     steps:
       - name: 簽出程式碼
