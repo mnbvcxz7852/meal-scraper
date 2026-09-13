@@ -119,10 +119,11 @@ def main():
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
         print(f"登入成功，開始高頻巡檢: {meal_url}")
 
-        # 2. 進行 40 次檢查 (約 10~15 分鐘，每 15 秒一次)
-        max_checks = 40
+        # 進行 730 次檢查 (約 4 小時 5 分鐘，每 15 秒檢查一次)
+        max_checks = 730
         check_interval = 15
         last_notified_items = set()
+        
 
         for i in range(1, max_checks + 1):
             now_str = time.strftime("%H:%M:%S")
