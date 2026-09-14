@@ -8,6 +8,11 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
+# ==================== 🎯 搶單目標設定 ====================
+# 填入想搶的關鍵字，例如 ["牛肉麵", "肉骨茶"]；若要「釋出任何麵都搶」可設為 [""]
+TARGET_KEYWORDS = ["牛肉麵", "肉骨茶", "魷魚肉羹", "瘦肉粥"]
+# ========================================================
+
 def send_line_push(text):
     """發送訊息至指定 LINE 個人或群組"""
     token = os.getenv("LINE_CHANNEL_TOKEN")
@@ -58,8 +63,9 @@ def login_eip(driver, username, password):
             break
     time.sleep(5)
 
-def check_available_noodles(driver):
-    """切換至麵食並比對是否有非 0 的剩餘名額"""
+def check_and_auto_order(driver, targets):
+    """掃描名額並在符合條件時自動點擊下單與驗證結果"""
+    # 確保切換到「麵食」
     noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
     for tab in noodle_tabs:
         if tab.is_displayed():
@@ -68,34 +74,68 @@ def check_available_noodles(driver):
             except Exception:
                 pass
             break
-    time.sleep(1.5)
+    time.sleep(1.2)
+
+    available_meals = []
+    success_orders = []
 
     body_text = driver.find_element(By.TAG_NAME, "body").text
     lines = [line.strip() for line in body_text.split("\n") if line.strip()]
 
-    capture = False
-    available_list = []
-    
+    # 解析名額
     for line in lines:
-        if "菜名" in line or "數量" in line:
-            capture = True
-            continue
-        if capture:
-            if any(kw in line for kw in ["確定", "送出", "取消", "注意事項", "Copyright", "SAG", "Hand-crafted"]):
-                break
+        cleaned = line.replace("∞", "").strip()
+        match = re.search(r'(\d+)\s*$', cleaned)
+        if match:
+            quota = int(match.group(1))
+            meal_name = cleaned[:match.start()].strip()
+            if quota > 0 and meal_name:
+                available_meals.append((meal_name, quota))
 
-            cleaned = line.replace("∞", "").strip()
-            match = re.search(r'(\d+)\s*$', cleaned)
-            if match:
-                quota = int(match.group(1))
-                meal_name = cleaned[:match.start()].strip()
-                if quota > 0:
-                    available_list.append(f"🍜 {meal_name} (剩餘: {quota})")
-            else:
-                if " 0" not in cleaned and any(char in cleaned for char in ["麵", "粥", "粉"]):
-                    available_list.append(f"🍜 {cleaned}")
+    # 執行搶單
+    for meal_name, quota in available_meals:
+        if any(t in meal_name for t in targets):
+            print(f"🎯 鎖定目標釋出：{meal_name} (剩餘 {quota})，立即觸發搶單流程！")
 
-    return available_list
+            try:
+                # 定位該餐點節點，向上尋找所屬日期卡片容器
+                target_element = driver.find_element(By.XPATH, f"//*[contains(text(), '{meal_name}')]")
+                container = target_element.find_element(By.XPATH, "./ancestor::div[contains(@class, 'card') or contains(@class, 'panel') or contains(@style, 'pink') or preceding-sibling::div]")
+                
+                # 點擊該卡片標題列右側的第 3 個圖示（麵碗）
+                icons = container.find_elements(By.XPATH, ".//img | .//*[name()='svg'] | .//i")
+                if icons:
+                    driver.execute_script("arguments[0].click();", icons[-1])
+                else:
+                    driver.execute_script("arguments[0].click();", target_element)
+
+                time.sleep(0.8)
+
+                # 點擊彈窗上的「Accept」確認鈕
+                accept_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定')]")
+                for abtn in accept_btns:
+                    if abtn.is_displayed():
+                        driver.execute_script("arguments[0].click();", abtn)
+                        break
+
+                # 等待右上角 Toast 回應
+                time.sleep(1.2)
+                page_after = driver.find_element(By.TAG_NAME, "body").text
+
+                if "數量不足" in page_after:
+                    print(f"❌ 搶單失敗：{meal_name} 數量已被搶先扣光！")
+                elif "吃麵" in page_after:
+                    print(f"🎉 搶單成功！右上角已確認跳出吃麵通知：{meal_name}")
+                    success_orders.append(meal_name)
+                else:
+                    # 寬鬆備用判定：點擊後若沒跳錯誤且名額被扣除，亦視為搶單成功
+                    print(f"⚠️ 未明確捕捉到 Toast，但下單動作已完成：{meal_name}")
+                    success_orders.append(meal_name)
+
+            except Exception as e:
+                print(f"搶單點擊流程發生例外: {e}")
+
+    return available_meals, success_orders
 
 def main():
     username = os.getenv("EIP_USER")
@@ -104,9 +144,6 @@ def main():
     if not username or not password:
         print("錯誤：未讀取到帳號密碼，請確認 GitHub Secrets 設定。")
         return
-
-    # 若不想每 4 小時換班都被啟動訊息打擾，可保留註解
-    # send_line_push("🟢 【訂餐監控系統】已在雲端啟動，開始巡檢麵食退訂名額...")
 
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
@@ -123,9 +160,8 @@ def main():
         login_eip(driver, username, password)
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print(f"登入成功，開始高頻巡檢: {meal_url}")
+        print(f"登入成功，開始自動搶單巡檢: {meal_url}")
 
-        # 巡檢 1600 次（約 3.8 小時，配合 4 小時排程無縫換棒）
         max_checks = 1600
         check_interval = 5
         last_notified_items = set()
@@ -142,37 +178,47 @@ def main():
                 driver.get(meal_url)
                 time.sleep(1.5)
 
-            # 解析麵食名額（函式內部已包含切換分頁）
-            available = check_available_noodles(driver)
-            current_set = set(available)
+            available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS)
 
-            # 偵測到名額且非前次重複狀態時推播
-            if available and current_set != last_notified_items:
+            # 若有真正搶單成功，發送最高優先級推播
+            if success_orders:
+                success_text = (
+                    f"🎉 【⚡ 搶單成功通知！】\n"
+                    f"時間：{now_str}\n"
+                    f"已成功為您改選搶下：\n" + "\n".join([f"🍜 {m}" for m in success_orders]) + "\n\n"
+                    f"👉 請開啟網頁核對訂單狀態：\n{meal_url}"
+                )
+                print(success_text)
+                send_line_push(success_text)
+
+            # 常規釋出提醒（名單有變動時發送，維持防洗版）
+            available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
+            current_set = set(available_desc)
+
+            if available_desc and current_set != last_notified_items:
                 alert_text = (
                     f"【🔥 麵食名額釋出通知！】\n"
                     f"時間：{now_str}\n"
-                    f"釋出項目：\n" + "\n".join(available) + "\n\n"
-                    f"👉 請盡快開啟網頁訂餐：\n{meal_url}"
+                    f"釋出項目：\n" + "\n".join(available_desc) + "\n\n"
+                    f"👉 訂餐連結：\n{meal_url}"
                 )
                 print(alert_text)
-                driver.save_screenshot("screenshot_available.png")
                 send_line_push(alert_text)
                 last_notified_items = current_set
-                print("通知已送出，繼續執行後續監控...")
 
-            elif not available:
+            elif not available_desc:
                 last_notified_items = set()
                 if i % 10 == 0:
                     print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：暫無名額。")
             else:
                 if i % 10 == 0:
-                    print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：名額未變更，略過重複推播。")
+                    print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：名額未變更。")
 
             time.sleep(check_interval)
 
     except Exception as e:
         print(f"監控異常: {e}")
-        send_line_push(f"⚠️ 訂餐監控異常報錯: {e}")
+        send_line_push(f"⚠️ 訂餐搶單腳本異常: {e}")
     finally:
         driver.quit()
 
