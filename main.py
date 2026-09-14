@@ -9,8 +9,12 @@ from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ==================== 🎯 搶單目標設定 ====================
-# 當釋出名額符合以下關鍵字時，自動執行搶單！
-TARGET_KEYWORDS = ["瘦肉粥"]
+# 1. 菜名關鍵字：設為 [""] 代表「只要是麵食通殺全部搶」
+TARGET_KEYWORDS = [""]
+
+# 2. 允許搶單的日期白名單（只鎖定下週，本週日期有名額也一律跳過不搶）
+# 請依下週實際開放的日期填寫 (MM-DD 格式)；若留空清單 [] 則不限制日期
+ALLOWED_DATES = ["09-28", "09-29", "09-30", "10-01", "10-02"]
 # ========================================================
 
 def send_line_push(text):
@@ -63,9 +67,9 @@ def login_eip(driver, username, password):
             break
     time.sleep(5)
 
-def check_and_auto_order(driver, targets, secured_dates):
+def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     """
-    精確透過日期與麵碗按鈕搶單
+    精確透過日期與麵碗按鈕搶單，具備下週日期過濾保護
     """
     # 確保切換至「麵食」分頁
     noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
@@ -81,16 +85,15 @@ def check_and_auto_order(driver, targets, secured_dates):
     body_text = driver.find_element(By.TAG_NAME, "body").text
     lines = [line.strip() for line in body_text.split("\n") if line.strip()]
 
-    # 解析文字建立 (日期, 菜名, 剩餘數量) 關聯
     current_date = ""
     parsed_items = []
     available_meals = []
     success_orders = []
 
+    # 解析文字建立 (日期, 菜名, 剩餘數量) 關聯
     for line in lines:
         cleaned = line.replace("∞", "").strip()
         
-        # 抓取日期行 (例如 09-22 二)
         date_match = re.search(r'(\d{2}-\d{2})\s*[一二三四五]', cleaned)
         if date_match:
             current_date = date_match.group(1)
@@ -103,14 +106,18 @@ def check_and_auto_order(driver, targets, secured_dates):
             if meal_name:
                 parsed_items.append((current_date, meal_name, quota))
                 if quota > 0:
-                    available_meals.append((meal_name, quota))
+                    available_meals.append((f"{current_date} {meal_name}", quota))
 
     # 巡檢是否有名額符合搶單條件
     for date_str, meal_name, quota in parsed_items:
         if quota <= 0:
             continue
 
-        # 比對是否為目標餐點
+        # 🛡️ 日期白名單防護：若有指定日期，非目標日期一律跳過（保護本週不被誤搶）
+        if allowed_dates and not any(allowed in date_str for allowed in allowed_dates):
+            continue
+
+        # 比對菜名關鍵字
         if not any(t in meal_name for t in targets):
             continue
 
@@ -121,36 +128,35 @@ def check_and_auto_order(driver, targets, secured_dates):
             print(f"[搶單略過] ⏩ {target_date_key} 已經成功搶過，跳過。")
             continue
 
-        # === 核心：點擊該日期的麵碗圖示 ===
+        # === 核心動作 1：點擊該日期的麵碗圖示 ===
         clicked_bowl = False
 
-        # 策略 A：直接尋找包含該日期文字的橫列元素
+        # 策略 A：鎖定包含該日期的卡片橫列，點擊第 3 個圖示
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
             for d_elem in date_rows:
-                # 尋找該日期標題所在的父層或祖先橫列
-                row_container = d_elem.find_element(By.XPATH, "./ancestor::div[contains(@class, 'card-header') or contains(@class, 'header') or contains(@style, 'pink') or count(.//button | .//svg | .//img) >= 3][1]")
-                
-                # 抓取該橫列內所有可點擊圖示或按鈕
+                row_container = d_elem.find_element(
+                    By.XPATH, 
+                    "./ancestor::div[contains(@class, 'card-header') or contains(@class, 'header') or contains(@style, 'pink') or count(.//button | .//svg | .//img) >= 3][1]"
+                )
                 clickables = row_container.find_elements(By.XPATH, ".//button | .//*[name()='svg'] | .//img | .//i | .//span[contains(@class, 'btn')]")
                 
-                # 依畫面排版，右側三個依序是 肉、菜、麵
-                # 篩選非展開箭頭的圖示，取倒數第二或第三個
                 if len(clickables) >= 3:
-                    # 取第三個元素（索引 2）通常就是麵碗
                     noodle_icon = clickables[2]
                     driver.execute_script("arguments[0].click();", noodle_icon)
-                    print(f"[點擊成功] 👉 已點擊 {date_str} 的第 3 個圖示 (麵碗)")
+                    print(f"[點擊成功] 👉 已點擊 {date_str} 的麵碗按鈕")
                     clicked_bowl = True
                     break
         except Exception as e1:
             print(f"[策略A未命中]: {e1}")
 
-        # 策略 B（備用）：若找不到容器，直接全頁面以 XPath 精準定位該日期的麵碗圖標
+        # 策略 B（備用）：若找不到容器，以 XPath 順序定位
         if not clicked_bowl and date_str:
             try:
-                # 定位與日期文字同一列的第 3 個按鈕/圖示
-                noodle_icon = driver.find_element(By.XPATH, f"(//*[contains(text(), '{date_str}')]/following::*[(self::button or self::img or name()='svg') and not(contains(@class, 'arrow'))])[3]")
+                noodle_icon = driver.find_element(
+                    By.XPATH, 
+                    f"(//*[contains(text(), '{date_str}')]/following::*[(self::button or self::img or name()='svg') and not(contains(@class, 'arrow'))])[3]"
+                )
                 driver.execute_script("arguments[0].click();", noodle_icon)
                 print(f"[點擊成功-策略B] 👉 已點擊 {date_str} 後方之麵碗")
                 clicked_bowl = True
@@ -158,12 +164,12 @@ def check_and_auto_order(driver, targets, secured_dates):
                 print(f"[策略B未命中]: {e2}")
 
         if not clicked_bowl:
-            print(f"[錯誤] ❌ 無法定位到 {date_str} 的麵碗按鈕，請確認頁面元素。")
+            print(f"[錯誤] ❌ 無法定位到 {date_str} 的麵碗按鈕。")
             continue
 
         time.sleep(0.8)
 
-        # === 核心：點擊彈跳視窗的 Accept 按鈕 ===
+        # === 核心動作 2：點擊彈跳視窗的 Accept 按鈕 ===
         try:
             accept_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定')]")
             clicked_accept = False
@@ -238,8 +244,9 @@ def main():
                 driver.get(meal_url)
                 time.sleep(1.5)
 
-            available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS, secured_dates)
+            available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS, ALLOWED_DATES, secured_dates)
 
+            # 搶單成功推播
             if success_orders:
                 success_text = (
                     f"🎉 【⚡ 搶單成功通知！】\n"
@@ -250,6 +257,7 @@ def main():
                 print(success_text)
                 send_line_push(success_text)
 
+            # 常規名額變動推播
             available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
             current_set = set(available_desc)
 
