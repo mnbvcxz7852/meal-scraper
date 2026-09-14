@@ -13,7 +13,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 TARGET_KEYWORDS = [""]
 
 # 2. 允許搶單的日期白名單（只鎖定目標日期，其餘日期有名額也一律跳過不搶）
-ALLOWED_DATES = ["09-24", "09-28", "09-29", "09-30", "10-01", "10-02"]
+ALLOWED_DATES = ["09-23", "09-28", "09-29", "09-30", "10-01", "10-02"]
 # ========================================================
 
 def send_discord_push(text):
