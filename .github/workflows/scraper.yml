@@ -27,9 +27,11 @@ jobs:
 
       - name: 執行高頻名額監控
         env:
+          PYTHONUNBUFFERED: "1"
           EIP_USER: ${{ secrets.EIP_USER }}
           EIP_PASS: ${{ secrets.EIP_PASS }}
-          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
-          LINE_TARGET_ID: ${{ secrets.LINE_TARGET_ID }}
+          #LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          #LINE_TARGET_ID: ${{ secrets.LINE_TARGET_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           python main.py
