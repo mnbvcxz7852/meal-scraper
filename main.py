@@ -12,37 +12,29 @@ from webdriver_manager.chrome import ChromeDriverManager
 # 1. 菜名關鍵字：設為 [""] 代表「只要是麵食通殺全部搶」
 TARGET_KEYWORDS = [""]
 
-# 2. 允許搶單的日期白名單（只鎖定下週，本週日期有名額也一律跳過不搶）
-# 請依下週實際開放的日期填寫 (MM-DD 格式)；若留空清單 [] 則不限制日期
-ALLOWED_DATES = ["09-28", "09-29", "09-30", "10-01", "10-02"]
+# 2. 允許搶單的日期白名單（只鎖定目標日期，其餘日期有名額也一律跳過不搶）
+ALLOWED_DATES = ["09-24", "09-28", "09-29", "09-30", "10-01", "10-02"]
 # ========================================================
 
-def send_line_push(text):
-    """發送訊息至指定 LINE 個人或群組"""
-    token = os.getenv("LINE_CHANNEL_TOKEN")
-    target_id = os.getenv("LINE_TARGET_ID")
+def send_discord_push(text):
+    """發送訊息至 Discord Webhook 頻道"""
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
     
-    if not token or not target_id:
-        print("[推播略過] 未設定 LINE_CHANNEL_TOKEN 或 LINE_TARGET_ID")
+    if not webhook_url:
+        print("[Discord略過] 未設定 DISCORD_WEBHOOK_URL")
         return
 
-    url = "https://api.line.me/v2/bot/message/push"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}"
-    }
     payload = {
-        "to": target_id,
-        "messages": [{"type": "text", "text": text}]
+        "content": text
     }
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=10)
-        if res.status_code == 200:
-            print(f"[LINE 推播成功] 訊息已發送至群組/用戶 {target_id}")
+        res = requests.post(webhook_url, json=payload, timeout=10)
+        if res.status_code in [200, 204]:
+            print("[Discord 推播成功] 訊息已發送至頻道")
         else:
-            print(f"[LINE 推播失敗] 狀態碼: {res.status_code}, 原因: {res.text}")
+            print(f"[Discord 推播失敗] 狀態碼: {res.status_code}, 原因: {res.text}")
     except Exception as e:
-        print(f"[LINE 推播異常]: {e}")
+        print(f"[Discord 推播異常]: {e}")
 
 def login_eip(driver, username, password):
     """登入 EIP 系統"""
@@ -71,7 +63,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     """
     精確透過日期與麵碗按鈕搶單，具備下週日期過濾保護
     """
-    # 確保切換至「麵食」分頁
     noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
     for tab in noodle_tabs:
         if tab.is_displayed():
@@ -90,7 +81,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     available_meals = []
     success_orders = []
 
-    # 解析文字建立 (日期, 菜名, 剩餘數量) 關聯
     for line in lines:
         cleaned = line.replace("∞", "").strip()
         
@@ -108,16 +98,13 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                 if quota > 0:
                     available_meals.append((f"{current_date} {meal_name}", quota))
 
-    # 巡檢是否有名額符合搶單條件
     for date_str, meal_name, quota in parsed_items:
         if quota <= 0:
             continue
 
-        # 🛡️ 日期白名單防護：若有指定日期，非目標日期一律跳過（保護本週不被誤搶）
         if allowed_dates and not any(allowed in date_str for allowed in allowed_dates):
             continue
 
-        # 比對菜名關鍵字
         if not any(t in meal_name for t in targets):
             continue
 
@@ -128,10 +115,9 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
             print(f"[搶單略過] ⏩ {target_date_key} 已經成功搶過，跳過。")
             continue
 
-        # === 核心動作 1：點擊該日期的麵碗圖示 ===
         clicked_bowl = False
 
-        # 策略 A：鎖定包含該日期的卡片橫列，點擊第 3 個圖示
+        # 策略 A
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
             for d_elem in date_rows:
@@ -150,7 +136,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         except Exception as e1:
             print(f"[策略A未命中]: {e1}")
 
-        # 策略 B（備用）：若找不到容器，以 XPath 順序定位
+        # 策略 B
         if not clicked_bowl and date_str:
             try:
                 noodle_icon = driver.find_element(
@@ -169,7 +155,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         time.sleep(0.8)
 
-        # === 核心動作 2：點擊彈跳視窗的 Accept 按鈕 ===
+        # 點擊 Accept
         try:
             accept_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定')]")
             clicked_accept = False
@@ -249,31 +235,32 @@ def main():
             # 搶單成功推播
             if success_orders:
                 success_text = (
-                    f"🎉 【⚡ 搶單成功通知！】\n"
-                    f"時間：{now_str}\n"
-                    f"已為您自動選取搶下：\n" + "\n".join([f"🍜 {m}" for m in success_orders]) + "\n\n"
-                    f"👉 請開啟系統確認訂單：\n{meal_url}"
+                    f"🎉 **【⚡ 搶單成功通知！】**\n"
+                    f"時間：`{now_str}`\n"
+                    f"已為您自動選取搶下：\n" + "\n".join([f"> 🍜 **{m}**" for m in success_orders]) + "\n\n"
+                    f"👉 [點此開啟系統確認訂單]({meal_url})"
                 )
                 print(success_text)
-                send_line_push(success_text)
+                send_discord_push(success_text)
 
             # 常規名額變動推播
             available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
             current_set = set(available_desc)
 
+            # 只有名額確實存在且清單有變更時才發送
             if available_desc and current_set != last_notified_items:
                 alert_text = (
-                    f"【🔥 麵食名額釋出通知！】\n"
-                    f"時間：{now_str}\n"
-                    f"釋出項目：\n" + "\n".join(available_desc) + "\n\n"
-                    f"👉 訂餐連結：\n{meal_url}"
+                    f"🔥 **【麵食名額釋出通知！】**\n"
+                    f"時間：`{now_str}`\n"
+                    f"釋出項目：\n" + "\n".join([f"> {item}" for item in available_desc]) + "\n\n"
+                    f"👉 [點此開啟訂餐連結]({meal_url})"
                 )
                 print(alert_text)
-                send_line_push(alert_text)
+                send_discord_push(alert_text)
                 last_notified_items = current_set
 
             elif not available_desc:
-                last_notified_items = set()
+                # 暫時抓不到名額時只印 log，不重置 last_notified_items，避免 DOM 載入延遲造成重複洗版
                 if i % 10 == 0:
                     print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：暫無名額。")
             else:
@@ -284,7 +271,7 @@ def main():
 
     except Exception as e:
         print(f"監控異常: {e}")
-        send_line_push(f"⚠️ 訂餐搶單腳本異常: {e}")
+        send_discord_push(f"⚠️ **訂餐搶單腳本異常**: `{e}`")
     finally:
         driver.quit()
 
