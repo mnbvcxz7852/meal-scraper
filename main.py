@@ -126,22 +126,33 @@ def main():
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
         print(f"登入成功，開始高頻巡檢: {meal_url}")
 
-        # 進行 730 次檢查 (約 4 小時 5 分鐘，每 15 秒檢查一次)
-        max_checks = 730
-        check_interval = 15
+       # === 調整為高頻快速巡檢 (間隔 5 秒) ===
+        max_checks = 2000          # 因為頻率變快，總次數可以增加以維持總時長
+        check_interval = 5         # 每次檢查完休息 5 秒
         last_notified_items = set()
 
         for i in range(1, max_checks + 1):
             now_str = time.strftime("%H:%M:%S")
             driver.get(meal_url)
-            time.sleep(3)
+            time.sleep(1.5)        # 縮短網頁載入等待
 
             # 防呆保護：若 Session 逾時被踢回登入頁，自動補登入
             if "login" in driver.current_url.lower():
                 print(f"[{now_str}] 偵測到 Session 過期，自動重新登入中...")
                 login_eip(driver, username, password)
                 driver.get(meal_url)
-                time.sleep(3)
+                time.sleep(1.5)
+
+            # 切換分頁並解析
+            noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
+            for tab in noodle_tabs:
+                if tab.is_displayed():
+                    try:
+                        driver.execute_script("arguments[0].click();", tab)
+                    except Exception:
+                        pass
+                    break
+            time.sleep(1)          # 縮短切換分頁等待
 
             available = check_available_noodles(driver)
             current_set = set(available)
