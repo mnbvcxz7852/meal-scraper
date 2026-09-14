@@ -61,7 +61,7 @@ def login_eip(driver, username, password):
 
 def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     """
-    精確透過日期與麵碗按鈕搶單，具備下週日期過濾保護
+    精確透過日期與麵碗按鈕搶單，具備日期白名單保護
     """
     noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
     for tab in noodle_tabs:
@@ -81,6 +81,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     available_meals = []
     success_orders = []
 
+    # 解析菜單文字建立關聯
     for line in lines:
         cleaned = line.replace("∞", "").strip()
         
@@ -98,13 +99,16 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                 if quota > 0:
                     available_meals.append((f"{current_date} {meal_name}", quota))
 
+    # 執行搶單檢查
     for date_str, meal_name, quota in parsed_items:
         if quota <= 0:
             continue
 
+        # 日期過濾保護
         if allowed_dates and not any(allowed in date_str for allowed in allowed_dates):
             continue
 
+        # 關鍵字過濾保護
         if not any(t in meal_name for t in targets):
             continue
 
@@ -117,7 +121,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         clicked_bowl = False
 
-        # 策略 A
+        # 策略 A：鎖定卡片列第三個按鈕（麵碗）
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
             for d_elem in date_rows:
@@ -136,7 +140,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         except Exception as e1:
             print(f"[策略A未命中]: {e1}")
 
-        # 策略 B
+        # 策略 B（備用）：依序位鎖定
         if not clicked_bowl and date_str:
             try:
                 noodle_icon = driver.find_element(
@@ -155,7 +159,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         time.sleep(0.8)
 
-        # 點擊 Accept
+        # 點擊 Accept 視窗確認
         try:
             accept_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定')]")
             clicked_accept = False
@@ -247,7 +251,6 @@ def main():
             available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
             current_set = set(available_desc)
 
-            # 只有名額確實存在且清單有變更時才發送
             if available_desc and current_set != last_notified_items:
                 alert_text = (
                     f"🔥 **【麵食名額釋出通知！】**\n"
@@ -260,7 +263,7 @@ def main():
                 last_notified_items = current_set
 
             elif not available_desc:
-                # 暫時抓不到名額時只印 log，不重置 last_notified_items，避免 DOM 載入延遲造成重複洗版
+                # 暫時抓不到名額時只印 log，不重置 last_notified_items，避免網路延遲造成重複洗版
                 if i % 10 == 0:
                     print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：暫無名額。")
             else:
