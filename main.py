@@ -10,7 +10,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 # ==================== 🎯 搶單目標設定 ====================
 # 當釋出名額符合以下關鍵字時，自動執行搶單！
-# 若要「只要釋出任何麵都搶」，可設為 TARGET_KEYWORDS = [""]
 TARGET_KEYWORDS = ["牛肉麵", "肉骨茶", "魷魚肉羹", "瘦肉粥"]
 # ========================================================
 
@@ -66,7 +65,7 @@ def login_eip(driver, username, password):
 
 def check_and_auto_order(driver, targets, secured_dates):
     """
-    精確定位日期卡片並執行搶單
+    精確透過日期與麵碗按鈕搶單
     """
     # 確保切換至「麵食」分頁
     noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
@@ -79,129 +78,122 @@ def check_and_auto_order(driver, targets, secured_dates):
             break
     time.sleep(1.2)
 
+    body_text = driver.find_element(By.TAG_NAME, "body").text
+    lines = [line.strip() for line in body_text.split("\n") if line.strip()]
+
+    # 解析文字建立 (日期, 菜名, 剩餘數量) 關聯
+    current_date = ""
+    parsed_items = []
     available_meals = []
     success_orders = []
 
-    # 1. 抓取畫面上所有的日期標題區塊（包含 09-XX 的元素）
-    # 透過日期元素向上鎖定整張卡片
-    date_headers = driver.find_elements(By.XPATH, "//*[re:test(text(), '^\d{2}-\d{2}')]" if hasattr(re, 'test') else "//*[contains(text(), '09-')]")
-    
-    # 備用尋找卡片方式：尋找包含「菜名」與「數量」的獨立區塊
-    cards = driver.find_elements(By.XPATH, "//div[contains(@class, 'card') or contains(@class, 'panel') or contains(@class, 'collapse') or .//table or contains(@style, 'pink')]")
-    # 若篩選過少，抓取含有日期標題的所有容器
-    valid_blocks = []
-    for c in cards:
-        txt = c.text
-        if any(f"09-{d:02d}" in txt for d in range(1, 32)) and ("數量" in txt or "菜名" in txt):
-            valid_blocks.append(c)
-
-    # 讀取全頁以建立名額清單
-    body_text = driver.find_element(By.TAG_NAME, "body").text
-    lines = [line.strip() for line in body_text.split("\n") if line.strip()]
     for line in lines:
         cleaned = line.replace("∞", "").strip()
+        
+        # 抓取日期行 (例如 09-22 二)
+        date_match = re.search(r'(\d{2}-\d{2})\s*[一二三四五]', cleaned)
+        if date_match:
+            current_date = date_match.group(1)
+            continue
+
         match = re.search(r'(\d+)\s*$', cleaned)
         if match:
             quota = int(match.group(1))
             meal_name = cleaned[:match.start()].strip()
-            if quota > 0 and meal_name:
-                available_meals.append((meal_name, quota))
+            if meal_name:
+                parsed_items.append((current_date, meal_name, quota))
+                if quota > 0:
+                    available_meals.append((meal_name, quota))
 
-    # 2. 針對有名額的項目進行卡片定位搶單
-    for meal_name, quota in available_meals:
-        # 比對目標關鍵字
+    # 巡檢是否有名額符合搶單條件
+    for date_str, meal_name, quota in parsed_items:
+        if quota <= 0:
+            continue
+
+        # 比對是否為目標餐點
         if not any(t in meal_name for t in targets):
             continue
 
-        print(f"🎯 偵測到目標品項有名額：{meal_name} (剩餘 {quota})")
+        target_date_key = date_str if date_str else meal_name
+        print(f"\n[搶單觸發] 🎯 鎖定：{target_date_key} {meal_name} (名額: {quota})")
 
-        # 尋找包含此 meal_name 的卡片容器
-        matched_block = None
-        for blk in valid_blocks:
-            if meal_name in blk.text:
-                matched_block = blk
-                break
-
-        # 如果找不到明確 block，直接以 meal_name 向上抓取 5 層容器
-        if not matched_block:
-            try:
-                elem = driver.find_element(By.XPATH, f"//*[contains(text(), '{meal_name}')]")
-                matched_block = elem.find_element(By.XPATH, "./ancestor::div[contains(., '09-')][1]")
-            except Exception:
-                pass
-
-        if not matched_block:
-            print(f"⚠️ 無法鎖定 {meal_name} 所屬的日期卡片區塊，略過此項。")
+        if target_date_key in secured_dates:
+            print(f"[搶單略過] ⏩ {target_date_key} 已經成功搶過，跳過。")
             continue
 
-        block_text = matched_block.text
-        date_match = re.search(r'(\d{2}-\d{2})', block_text)
-        date_key = date_match.group(1) if date_match else meal_name
+        # === 核心：點擊該日期的麵碗圖示 ===
+        clicked_bowl = False
 
-        # 檢查防重複機制
-        if date_key in secured_dates:
-            print(f"⏩ {date_key} 已在搶單成功清單中，跳過。")
-            continue
-
-        if "吃麵" in block_text:
-            print(f"⏩ {date_key} 畫面上已是「吃麵」狀態，標記並跳過。")
-            secured_dates.add(date_key)
-            continue
-
-        print(f"⚡ 開始執行點擊搶單流程：{date_key} -> {meal_name}")
-
+        # 策略 A：直接尋找包含該日期文字的橫列元素
         try:
-            # 尋找該區塊內右側的「麵碗」按鈕（通常為第三個圖示，或圖片/SVG/i 標籤）
-            clickable_icons = matched_block.find_elements(By.XPATH, ".//img | .//*[name()='svg'] | .//i | .//span[contains(@class, 'icon')]")
-            
-            # 從找到的圖示中，選取最右邊的那個（依截圖，右側圖示由左至右為 肉、菜、麵）
-            noodle_button = None
-            if len(clickable_icons) >= 3:
-                # 排除可能包含的收合箭頭，取倒數第二或第三個，優先測試最接近右側的圖標
-                noodle_button = clickable_icons[2]
-            elif clickable_icons:
-                noodle_button = clickable_icons[-1]
+            date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
+            for d_elem in date_rows:
+                # 尋找該日期標題所在的父層或祖先橫列
+                row_container = d_elem.find_element(By.XPATH, "./ancestor::div[contains(@class, 'card-header') or contains(@class, 'header') or contains(@style, 'pink') or count(.//button | .//svg | .//img) >= 3][1]")
+                
+                # 抓取該橫列內所有可點擊圖示或按鈕
+                clickables = row_container.find_elements(By.XPATH, ".//button | .//*[name()='svg'] | .//img | .//i | .//span[contains(@class, 'btn')]")
+                
+                # 依畫面排版，右側三個依序是 肉、菜、麵
+                # 篩選非展開箭頭的圖示，取倒數第二或第三個
+                if len(clickables) >= 3:
+                    # 取第三個元素（索引 2）通常就是麵碗
+                    noodle_icon = clickables[2]
+                    driver.execute_script("arguments[0].click();", noodle_icon)
+                    print(f"[點擊成功] 👉 已點擊 {date_str} 的第 3 個圖示 (麵碗)")
+                    clicked_bowl = True
+                    break
+        except Exception as e1:
+            print(f"[策略A未命中]: {e1}")
 
-            if noodle_button:
-                driver.execute_script("arguments[0].click();", noodle_button)
-                print(f"👉 已點擊【麵碗】圖示")
-            else:
-                print("❌ 未找到麵碗按鈕元素")
-                continue
+        # 策略 B（備用）：若找不到容器，直接全頁面以 XPath 精準定位該日期的麵碗圖標
+        if not clicked_bowl and date_str:
+            try:
+                # 定位與日期文字同一列的第 3 個按鈕/圖示
+                noodle_icon = driver.find_element(By.XPATH, f"(//*[contains(text(), '{date_str}')]/following::*[(self::button or self::img or name()='svg') and not(contains(@class, 'arrow'))])[3]")
+                driver.execute_script("arguments[0].click();", noodle_icon)
+                print(f"[點擊成功-策略B] 👉 已點擊 {date_str} 後方之麵碗")
+                clicked_bowl = True
+            except Exception as e2:
+                print(f"[策略B未命中]: {e2}")
 
-            time.sleep(0.8)
+        if not clicked_bowl:
+            print(f"[錯誤] ❌ 無法定位到 {date_str} 的麵碗按鈕，請確認頁面元素。")
+            continue
 
-            # 尋找彈跳視窗上的橘色「Accept」按鈕
+        time.sleep(0.8)
+
+        # === 核心：點擊彈跳視窗的 Accept 按鈕 ===
+        try:
             accept_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定')]")
             clicked_accept = False
             for abtn in accept_btns:
                 if abtn.is_displayed():
                     driver.execute_script("arguments[0].click();", abtn)
-                    print(f"👉 已點擊【Accept】確認按鈕")
+                    print("[點擊成功] 👉 已點擊彈窗【Accept】按鈕")
                     clicked_accept = True
                     break
 
             if not clicked_accept:
-                print("❌ 未偵測到 Accept 彈窗或按鈕未顯示")
+                print("[錯誤] ❌ 彈跳視窗未跳出或找不到 Accept 按鈕！")
                 continue
 
-            # 等待並讀取右上角 Toast 結果
             time.sleep(1.2)
             page_after = driver.find_element(By.TAG_NAME, "body").text
 
             if "數量不足" in page_after:
-                print(f"❌ 搶單失敗：{meal_name} 數量已被搶先扣光！")
+                print(f"❌ 搶單失敗：{date_str} {meal_name} 名額已被搶走。")
             elif "吃麵" in page_after:
-                print(f"🎉 搶單成功！右上角已確認跳出吃麵通知：{meal_name}")
-                secured_dates.add(date_key)
-                success_orders.append(meal_name)
+                print(f"🎉 搶單成功！右上角確認顯示吃麵：{date_str} {meal_name}")
+                secured_dates.add(target_date_key)
+                success_orders.append(f"{date_str} {meal_name}")
             else:
-                print(f"⚠️ 動作已執行，記錄狀態避免重按：{meal_name}")
-                secured_dates.add(date_key)
-                success_orders.append(meal_name)
+                print(f"⚠️ 動作已執行完畢：{date_str} {meal_name}")
+                secured_dates.add(target_date_key)
+                success_orders.append(f"{date_str} {meal_name}")
 
         except Exception as e:
-            print(f"搶單執行過程發生例外: {e}")
+            print(f"[下單流程異常]: {e}")
 
     return available_meals, success_orders
 
