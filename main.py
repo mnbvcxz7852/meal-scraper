@@ -10,7 +10,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 # ==================== 🎯 搶單目標設定 ====================
 # 當釋出名額符合以下關鍵字時，自動執行搶單！
-TARGET_KEYWORDS = ["牛肉麵", "肉骨茶", "魷魚肉羹", "瘦肉粥"]
+TARGET_KEYWORDS = ["瘦肉粥"]
 # ========================================================
 
 def send_line_push(text):
