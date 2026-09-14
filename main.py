@@ -68,7 +68,7 @@ def check_available_noodles(driver):
             except Exception:
                 pass
             break
-    time.sleep(2)
+    time.sleep(1.5)
 
     body_text = driver.find_element(By.TAG_NAME, "body").text
     lines = [line.strip() for line in body_text.split("\n") if line.strip()]
@@ -105,8 +105,8 @@ def main():
         print("錯誤：未讀取到帳號密碼，請確認 GitHub Secrets 設定。")
         return
 
-    # 若每 4 小時啟動一次不想被頻繁打擾，可將下面這行開頭加 # 註解掉
-    send_line_push("🟢 【訂餐監控系統】已在雲端啟動，開始巡檢麵食退訂名額...")
+    # 若不想每 4 小時換班都被啟動訊息打擾，可保留註解
+    # send_line_push("🟢 【訂餐監控系統】已在雲端啟動，開始巡檢麵食退訂名額...")
 
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
@@ -120,44 +120,33 @@ def main():
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
     try:
-        # 初次登入
         login_eip(driver, username, password)
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
         print(f"登入成功，開始高頻巡檢: {meal_url}")
 
-       # === 調整為高頻快速巡檢 (間隔 5 秒) ===
-        max_checks = 2000          # 因為頻率變快，總次數可以增加以維持總時長
-        check_interval = 5         # 每次檢查完休息 5 秒
+        # 巡檢 1600 次（約 3.8 小時，配合 4 小時排程無縫換棒）
+        max_checks = 1600
+        check_interval = 5
         last_notified_items = set()
 
         for i in range(1, max_checks + 1):
             now_str = time.strftime("%H:%M:%S")
             driver.get(meal_url)
-            time.sleep(1.5)        # 縮短網頁載入等待
+            time.sleep(1.5)
 
-            # 防呆保護：若 Session 逾時被踢回登入頁，自動補登入
+            # Session 逾時保護
             if "login" in driver.current_url.lower():
                 print(f"[{now_str}] 偵測到 Session 過期，自動重新登入中...")
                 login_eip(driver, username, password)
                 driver.get(meal_url)
                 time.sleep(1.5)
 
-            # 切換分頁並解析
-            noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
-            for tab in noodle_tabs:
-                if tab.is_displayed():
-                    try:
-                        driver.execute_script("arguments[0].click();", tab)
-                    except Exception:
-                        pass
-                    break
-            time.sleep(1)          # 縮短切換分頁等待
-
+            # 解析麵食名額（函式內部已包含切換分頁）
             available = check_available_noodles(driver)
             current_set = set(available)
 
-            # 偵測到名額且與上次通知名單不同時觸發通知
+            # 偵測到名額且非前次重複狀態時推播
             if available and current_set != last_notified_items:
                 alert_text = (
                     f"【🔥 麵食名額釋出通知！】\n"
@@ -172,7 +161,6 @@ def main():
                 print("通知已送出，繼續執行後續監控...")
 
             elif not available:
-                # 庫存歸零或被搶光時重置記錄
                 last_notified_items = set()
                 if i % 10 == 0:
                     print(f"[{now_str}] 第 {i}/{max_checks} 次檢查：暫無名額。")
