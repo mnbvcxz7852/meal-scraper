@@ -9,7 +9,8 @@ from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ==================== 🎯 搶單目標設定 ====================
-# 填入想搶的關鍵字，例如 ["牛肉麵", "肉骨茶"]；若要「釋出任何麵都搶」可設為 [""]
+# 當釋出名額符合以下關鍵字時，自動執行搶單！
+# 若要「只要釋出任何麵都搶」，可設為 TARGET_KEYWORDS = [""]
 TARGET_KEYWORDS = ["牛肉麵", "肉骨茶", "魷魚肉羹", "瘦肉粥"]
 # ========================================================
 
@@ -63,9 +64,14 @@ def login_eip(driver, username, password):
             break
     time.sleep(5)
 
-def check_and_auto_order(driver, targets):
-    """掃描名額並在符合條件時自動點擊下單與驗證結果"""
-    # 確保切換到「麵食」
+def check_and_auto_order(driver, targets, secured_dates):
+    """
+    掃描名額，符合目標時自動下單。
+    具備雙重防重複下單防護：
+    1. secured_dates 記憶體比對（已搶到的日期直接跳過）。
+    2. DOM 節點底色/狀態比對（若卡片已為亮黃色或顯示吃麵則跳過）。
+    """
+    # 確保切換至「麵食」分頁
     noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
     for tab in noodle_tabs:
         if tab.is_displayed():
@@ -82,7 +88,7 @@ def check_and_auto_order(driver, targets):
     body_text = driver.find_element(By.TAG_NAME, "body").text
     lines = [line.strip() for line in body_text.split("\n") if line.strip()]
 
-    # 解析名額
+    # 讀取目前釋出的餐點與剩餘數量
     for line in lines:
         cleaned = line.replace("∞", "").strip()
         match = re.search(r'(\d+)\s*$', cleaned)
@@ -92,17 +98,35 @@ def check_and_auto_order(driver, targets):
             if quota > 0 and meal_name:
                 available_meals.append((meal_name, quota))
 
-    # 執行搶單
+    # 逐一檢查是否執行搶單
     for meal_name, quota in available_meals:
         if any(t in meal_name for t in targets):
-            print(f"🎯 鎖定目標釋出：{meal_name} (剩餘 {quota})，立即觸發搶單流程！")
-
             try:
-                # 定位該餐點節點，向上尋找所屬日期卡片容器
                 target_element = driver.find_element(By.XPATH, f"//*[contains(text(), '{meal_name}')]")
-                container = target_element.find_element(By.XPATH, "./ancestor::div[contains(@class, 'card') or contains(@class, 'panel') or contains(@style, 'pink') or preceding-sibling::div]")
-                
-                # 點擊該卡片標題列右側的第 3 個圖示（麵碗）
+                container = target_element.find_element(
+                    By.XPATH, 
+                    "./ancestor::div[contains(@class, 'card') or contains(@class, 'panel') or contains(@style, 'pink') or preceding-sibling::div]"
+                )
+
+                # 提取區塊內的日期文字（例如 09-23）
+                container_text = container.text
+                date_match = re.search(r'(\d{2}-\d{2})', container_text)
+                date_key = date_match.group(1) if date_match else meal_name
+
+                # 防護 1：若該日期已記錄在搶單成功名單中，跳過
+                if date_key in secured_dates:
+                    continue
+
+                # 防護 2：檢查 UI 樣式是否已經呈現亮黃色或已選中（避免多次扣名額）
+                container_style = (container.get_attribute("style") or "").lower()
+                container_class = (container.get_attribute("class") or "").lower()
+                if "yellow" in container_style or "rgb(255, 255" in container_style or "吃麵" in container_text:
+                    secured_dates.add(date_key)
+                    continue
+
+                print(f"🎯 鎖定目標釋出：{meal_name} (剩餘 {quota})，開始下單...")
+
+                # 點擊該卡片右側的第 3 個圖示（麵碗）
                 icons = container.find_elements(By.XPATH, ".//img | .//*[name()='svg'] | .//i")
                 if icons:
                     driver.execute_script("arguments[0].click();", icons[-1])
@@ -118,7 +142,7 @@ def check_and_auto_order(driver, targets):
                         driver.execute_script("arguments[0].click();", abtn)
                         break
 
-                # 等待右上角 Toast 回應
+                # 等待並讀取右上角 Toast 結果
                 time.sleep(1.2)
                 page_after = driver.find_element(By.TAG_NAME, "body").text
 
@@ -126,10 +150,12 @@ def check_and_auto_order(driver, targets):
                     print(f"❌ 搶單失敗：{meal_name} 數量已被搶先扣光！")
                 elif "吃麵" in page_after:
                     print(f"🎉 搶單成功！右上角已確認跳出吃麵通知：{meal_name}")
+                    secured_dates.add(date_key)
                     success_orders.append(meal_name)
                 else:
-                    # 寬鬆備用判定：點擊後若沒跳錯誤且名額被扣除，亦視為搶單成功
-                    print(f"⚠️ 未明確捕捉到 Toast，但下單動作已完成：{meal_name}")
+                    # 寬鬆判定：若無數量不足且流程完成，標記為成功避免重複點擊
+                    print(f"⚠️ 未明確捕捉到 Toast，但已完成 Accept 動作：{meal_name}")
+                    secured_dates.add(date_key)
                     success_orders.append(meal_name)
 
             except Exception as e:
@@ -165,6 +191,7 @@ def main():
         max_checks = 1600
         check_interval = 5
         last_notified_items = set()
+        secured_dates = set()  # 存放已搶到成功的日期（如 "09-23"），避免重複點擊
 
         for i in range(1, max_checks + 1):
             now_str = time.strftime("%H:%M:%S")
@@ -178,20 +205,20 @@ def main():
                 driver.get(meal_url)
                 time.sleep(1.5)
 
-            available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS)
+            available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS, secured_dates)
 
-            # 若有真正搶單成功，發送最高優先級推播
+            # 搶單成功推播
             if success_orders:
                 success_text = (
                     f"🎉 【⚡ 搶單成功通知！】\n"
                     f"時間：{now_str}\n"
-                    f"已成功為您改選搶下：\n" + "\n".join([f"🍜 {m}" for m in success_orders]) + "\n\n"
-                    f"👉 請開啟網頁核對訂單狀態：\n{meal_url}"
+                    f"已為您自動選取搶下：\n" + "\n".join([f"🍜 {m}" for m in success_orders]) + "\n\n"
+                    f"👉 請開啟系統確認訂單：\n{meal_url}"
                 )
                 print(success_text)
                 send_line_push(success_text)
 
-            # 常規釋出提醒（名單有變動時發送，維持防洗版）
+            # 一般釋出名額推播（名單改變時通知，防止洗版）
             available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
             current_set = set(available_desc)
 
