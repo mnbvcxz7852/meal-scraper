@@ -9,28 +9,24 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
-# 台灣時區 (UTC+8)
 TAIPEI_TZ = timezone(timedelta(hours=8))
 
 # ==================== 🎯 搶單目標設定 ====================
 # 1. 菜名關鍵字：設為 [""] 代表「只要是麵食通殺全部搶」
 TARGET_KEYWORDS = [""]
 
-# 2. 允許搶單的日期白名單（只鎖定目標日期，其餘日期有名額也一律跳過不搶）
+# 2. 允許搶單的日期白名單（請依開放週次填寫 MM-DD 格式；空清單 [] 則不限制日期）
 ALLOWED_DATES = ["10-05", "10-06", "10-07", "10-08", "10-09"]
 # ========================================================
 
 def send_discord_push(text):
     """發送訊息至 Discord Webhook 頻道"""
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
-    
     if not webhook_url:
         print("[Discord略過] 未設定 DISCORD_WEBHOOK_URL")
         return
 
-    payload = {
-        "content": text
-    }
+    payload = {"content": text}
     try:
         res = requests.post(webhook_url, json=payload, timeout=10)
         if res.status_code in [200, 204]:
@@ -39,6 +35,28 @@ def send_discord_push(text):
             print(f"[Discord 推播失敗] 狀態碼: {res.status_code}, 原因: {res.text}")
     except Exception as e:
         print(f"[Discord 推播異常]: {e}")
+
+def safe_click(driver, element):
+    """萬用點擊函式：相容 SVG、原生 Button 與各類容器節點"""
+    try:
+        driver.execute_script("""
+            var elem = arguments[0];
+            if (elem.click) {
+                elem.click();
+            } else if (elem.parentElement && elem.parentElement.click) {
+                elem.parentElement.click();
+            } else {
+                var evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                elem.dispatchEvent(evt);
+            }
+        """, element)
+        return True
+    except Exception:
+        try:
+            element.click()
+            return True
+        except Exception:
+            return False
 
 def login_eip(driver, username, password):
     """登入 EIP 系統"""
@@ -65,15 +83,12 @@ def login_eip(driver, username, password):
 
 def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     """
-    精確透過日期與麵碗按鈕搶單，具備日期白名單保護
+    精確透過日期與麵碗按鈕搶單
     """
     noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
     for tab in noodle_tabs:
         if tab.is_displayed():
-            try:
-                driver.execute_script("arguments[0].click();", tab)
-            except Exception:
-                pass
+            safe_click(driver, tab)
             break
     time.sleep(1.2)
 
@@ -133,12 +148,12 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                 
                 if len(clickables) >= 3:
                     noodle_icon = clickables[2]
-                    driver.execute_script("arguments[0].click();", noodle_icon)
-                    print(f"[點擊成功] 👉 已點擊 {date_str} 的麵碗按鈕")
-                    clicked_bowl = True
-                    break
-        except Exception as e1:
-            print(f"[策略A未命中]: {e1}")
+                    if safe_click(driver, noodle_icon):
+                        print(f"[點擊成功] 👉 已點擊 {date_str} 的麵碗按鈕")
+                        clicked_bowl = True
+                        break
+        except Exception:
+            pass
 
         # 策略 B
         if not clicked_bowl and date_str:
@@ -147,11 +162,11 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                     By.XPATH, 
                     f"(//*[contains(text(), '{date_str}')]/following::*[(self::button or self::img or name()='svg') and not(contains(@class, 'arrow'))])[3]"
                 )
-                driver.execute_script("arguments[0].click();", noodle_icon)
-                print(f"[點擊成功-策略B] 👉 已點擊 {date_str} 後方之麵碗")
-                clicked_bowl = True
-            except Exception as e2:
-                print(f"[策略B未命中]: {e2}")
+                if safe_click(driver, noodle_icon):
+                    print(f"[點擊成功-策略B] 👉 已點擊 {date_str} 後方之麵碗")
+                    clicked_bowl = True
+            except Exception:
+                pass
 
         if not clicked_bowl:
             print(f"[錯誤] ❌ 無法定位到 {date_str} 的麵碗按鈕。")
@@ -159,16 +174,16 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         time.sleep(0.8)
 
-        # 點擊 Accept
+        # 點擊 Accept 按鈕
         try:
             accept_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定')]")
             clicked_accept = False
             for abtn in accept_btns:
                 if abtn.is_displayed():
-                    driver.execute_script("arguments[0].click();", abtn)
-                    print("[點擊成功] 👉 已點擊彈窗【Accept】按鈕")
-                    clicked_accept = True
-                    break
+                    if safe_click(driver, abtn):
+                        print("[點擊成功] 👉 已點擊彈窗【Accept】按鈕")
+                        clicked_accept = True
+                        break
 
             if not clicked_accept:
                 print("[錯誤] ❌ 彈跳視窗未跳出或找不到 Accept 按鈕！")
@@ -236,7 +251,6 @@ def main():
 
             available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS, ALLOWED_DATES, secured_dates)
 
-            # 搶單成功推播
             if success_orders:
                 success_text = (
                     f"🎉 **【⚡ 搶單成功通知！】**\n"
@@ -247,7 +261,6 @@ def main():
                 print(success_text)
                 send_discord_push(success_text)
 
-            # 常規名額變動推播
             available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
             current_set = set(available_desc)
 
