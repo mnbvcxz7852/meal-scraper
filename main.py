@@ -53,7 +53,8 @@ def login_eip(driver, username, password):
     login_url = "https://eip2.sag.tw/SAGWeb/pages/authentication/login-v1"
     driver.get(login_url)
     
-    wait = WebDriverWait(driver, 10)
+    # 🛡️ 放寬等待時間至 20 秒，適應 GitHub 偶發的網路延遲
+    wait = WebDriverWait(driver, 20)
     user_inputs = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "input[type='text'], input[name*='user'], input[id*='user']")))
     user_inputs[0].clear()
     user_inputs[0].send_keys(username)
@@ -122,7 +123,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         time.sleep(0.5) 
 
-        # 鎖定麵碗並進行【視覺防禦】判定
+        # 視覺防禦判定
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
             for d_elem in date_rows:
@@ -176,7 +177,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if not clicked_bowl:
             continue
 
-        # ⚡ 動態攔截彈窗與防退訂機制
+        # 動態攔截彈窗與防退訂機制
         try:
             wait = WebDriverWait(driver, 3)
             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
@@ -242,9 +243,24 @@ def main():
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
     try:
-        login_eip(driver, username, password)
+        # 🛡️ 加入初次登入重試機制 (最多重試 3 次)
+        login_success = False
+        for attempt in range(3):
+            try:
+                login_eip(driver, username, password)
+                login_success = True
+                break
+            except Exception as e:
+                error_name = type(e).__name__
+                print(f"⚠️ 初次登入延遲/失敗 (嘗試 {attempt+1}/3): {error_name}... 3 秒後重試")
+                time.sleep(3)
+
+        if not login_success:
+            print("❌ EIP 系統登入失敗次數過多，終止本次腳本。")
+            return
+
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 極速模式啟動中 (已加入無盡巡檢保護)...")
+        print("⚡ 極速模式啟動中 (已加入初次登入保護與無盡巡檢)...")
 
         max_checks = 5000
         check_interval = 1.5 
@@ -254,7 +270,6 @@ def main():
         for i in range(1, max_checks + 1):
             now_str = datetime.now(TAIPEI_TZ).strftime("%H:%M:%S")
             
-            # 🛡️ 關鍵修正：將內部可能發生網路異常的操作，包裝在內層的 try-except 中
             try:
                 driver.get(meal_url)
 
@@ -283,8 +298,9 @@ def main():
                 time.sleep(check_interval)
 
             except Exception as loop_e:
-                print(f"[{now_str}] ⚠️ 第 {i} 次巡檢發生單次異常，將於 3 秒後自動重試: {loop_e}")
-                time.sleep(3) # 發生錯誤時休息 3 秒再繼續下一次迴圈
+                error_name = type(loop_e).__name__
+                print(f"[{now_str}] ⚠️ 第 {i} 次巡檢發生單次異常 ({error_name})，將於 3 秒後自動重試...")
+                time.sleep(3) 
 
     except Exception as e:
         print(f"❌ 嚴重異常，程式中止: {e}")
