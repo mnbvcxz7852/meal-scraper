@@ -131,7 +131,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                     "./ancestor::div[contains(@class, 'card-header') or contains(@class, 'header') or contains(@style, 'pink') or count(.//button | .//svg | .//img) >= 3][1]"
                 )
                 
-                # 🌟 視覺判定：讀取瀏覽器渲染的 CSS 背景色，檢查是否為黃色
                 is_yellow = driver.execute_script(r"""
                     function isY(node) {
                         if (!node) return false;
@@ -139,7 +138,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                         var m = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
                         if (m) {
                             var r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
-                            // 黃色特徵：紅、綠色值高於 190，且藍色值明顯偏低
                             return (r > 190 && g > 190 && (r - b > 15));
                         }
                         return false;
@@ -154,7 +152,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                     clicked_bowl = "SKIP"
                     break
 
-                # 若不是黃色，正常點擊
                 clickables = row_container.find_elements(By.XPATH, ".//button | .//*[name()='svg'] | .//img | .//i | .//span[contains(@class, 'btn')]")
                 if len(clickables) >= 3:
                     if safe_click(driver, clickables[2]):
@@ -179,7 +176,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if not clicked_bowl:
             continue
 
-        # ⚡ 動態攔截彈窗與防退訂機制 (第二道防線)
+        # ⚡ 動態攔截彈窗與防退訂機制
         try:
             wait = WebDriverWait(driver, 3)
             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
@@ -247,7 +244,7 @@ def main():
     try:
         login_eip(driver, username, password)
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 極速模式啟動中 (已載入視覺防禦與彈窗防護)...")
+        print("⚡ 極速模式啟動中 (已加入無盡巡檢保護)...")
 
         max_checks = 5000
         check_interval = 1.5 
@@ -256,33 +253,42 @@ def main():
 
         for i in range(1, max_checks + 1):
             now_str = datetime.now(TAIPEI_TZ).strftime("%H:%M:%S")
-            driver.get(meal_url)
-
-            if "login" in driver.current_url.lower():
-                login_eip(driver, username, password)
+            
+            # 🛡️ 關鍵修正：將內部可能發生網路異常的操作，包裝在內層的 try-except 中
+            try:
                 driver.get(meal_url)
 
-            available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS, ALLOWED_DATES, secured_dates)
+                if "login" in driver.current_url.lower():
+                    print(f"[{now_str}] 偵測到登入狀態失效，嘗試重新登入...")
+                    login_eip(driver, username, password)
+                    driver.get(meal_url)
 
-            if success_orders:
-                success_text = f"🎉 **【⚡ 極速搶單成功！】**\n時間：`{now_str}`\n已為您搶下：\n" + "\n".join([f"> 🍜 **{m}**" for m in success_orders])
-                send_discord_push(success_text)
+                available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS, ALLOWED_DATES, secured_dates)
 
-            available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
-            current_set = set(available_desc)
+                if success_orders:
+                    success_text = f"🎉 **【⚡ 極速搶單成功！】**\n時間：`{now_str}`\n已為您搶下：\n" + "\n".join([f"> 🍜 **{m}**" for m in success_orders])
+                    send_discord_push(success_text)
 
-            if available_desc and current_set != last_notified_items:
-                alert_text = f"🔥 **【名額釋出】**\n時間：`{now_str}`\n釋出項目：\n" + "\n".join([f"> {item}" for item in available_desc])
-                send_discord_push(alert_text)
-                last_notified_items = current_set
-            elif not available_desc:
-                if i % 20 == 0:
-                    print(f"[{now_str}] 巡檢正常運作中...")
+                available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
+                current_set = set(available_desc)
 
-            time.sleep(check_interval)
+                if available_desc and current_set != last_notified_items:
+                    alert_text = f"🔥 **【名額釋出】**\n時間：`{now_str}`\n釋出項目：\n" + "\n".join([f"> {item}" for item in available_desc])
+                    send_discord_push(alert_text)
+                    last_notified_items = current_set
+                elif not available_desc:
+                    if i % 20 == 0:
+                        print(f"[{now_str}] 巡檢正常運作中... 第 {i}/{max_checks} 次")
+
+                time.sleep(check_interval)
+
+            except Exception as loop_e:
+                print(f"[{now_str}] ⚠️ 第 {i} 次巡檢發生單次異常，將於 3 秒後自動重試: {loop_e}")
+                time.sleep(3) # 發生錯誤時休息 3 秒再繼續下一次迴圈
 
     except Exception as e:
-        print(f"異常: {e}")
+        print(f"❌ 嚴重異常，程式中止: {e}")
+        send_discord_push(f"⚠️ **訂餐搶單腳本嚴重異常**: `{e}`")
     finally:
         driver.quit()
 
