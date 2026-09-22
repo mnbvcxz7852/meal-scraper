@@ -10,6 +10,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.common.exceptions import TimeoutException
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
 
@@ -66,10 +67,9 @@ def login_eip(driver, username, password):
         if any(w in btn.text for w in ["登入", "Login"]) or btn.get_attribute("type") == "submit":
             safe_click(driver, btn)
             break
-    time.sleep(2) # 登入跳轉需要一點固定時間
+    time.sleep(2)
 
 def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
-    # 切換麵食分頁，最多等 2 秒
     try:
         noodle_tabs = WebDriverWait(driver, 2).until(
             EC.presence_of_all_elements_located((By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]"))
@@ -81,8 +81,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     except Exception:
         pass
     
-    # 動態等待麵食內容載入 (小休眠確保 DOM 更新)
-    time.sleep(0.3)
+    time.sleep(0.4) 
     body_text = driver.find_element(By.TAG_NAME, "body").text
     lines = [line.strip() for line in body_text.split("\n") if line.strip()]
 
@@ -121,6 +120,8 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         print(f"\n[搶單觸發] 🎯 極速鎖定：{target_date_key} {meal_name} (名額: {quota})")
         clicked_bowl = False
 
+        time.sleep(0.5) 
+
         # 鎖定麵碗並點擊
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
@@ -133,6 +134,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                 if len(clickables) >= 3:
                     if safe_click(driver, clickables[2]):
                         clicked_bowl = True
+                        print(f"[步驟 1] 👉 成功點擊 {date_str} 麵碗，等待彈窗...")
                         break
         except Exception:
             pass
@@ -142,22 +144,46 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                 noodle_icon = driver.find_element(By.XPATH, f"(//*[contains(text(), '{date_str}')]/following::*[(self::button or self::img or name()='svg') and not(contains(@class, 'arrow'))])[3]")
                 if safe_click(driver, noodle_icon):
                     clicked_bowl = True
+                    print(f"[步驟 1] 👉 成功點擊 {date_str} 麵碗，等待彈窗...")
             except Exception:
                 pass
 
         if not clicked_bowl:
             continue
 
-        # ⚡ 動態攔截彈窗 (拔除 sleep，最快 0.01 秒觸發)
+        # ⚡ 動態攔截彈窗與防退訂機制
         try:
             wait = WebDriverWait(driver, 3)
-            accept_btns = wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定')]")))
+            # 等待彈窗按鈕出現 (只要 Accept 或 Cancel 出現都算)
+            wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
+            
+            time.sleep(0.3) # 給予 0.3 秒確保彈窗文字完成渲染
+            modal_text = driver.find_element(By.TAG_NAME, "body").text
+            
+            # 🛡️ 絕對防禦：如果是取消視窗，立刻關閉，絕對不按 Accept！
+            if "是否取消" in modal_text or "確定要取消" in modal_text:
+                print(f"🛑 [防禦攔截] 發現 {date_str} 已有訂單 (跳出取消視窗)！立即中斷操作並關閉視窗。")
+                
+                # 點擊灰色的 Cancel 按鈕安全退出
+                cancel_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Cancel') or contains(text(), '取消')]")
+                for cbtn in cancel_btns:
+                    if cbtn.is_displayed():
+                        safe_click(driver, cbtn)
+                        break
+                        
+                # 標記為已處理，未來輪詢直接跳過
+                secured_dates.add(target_date_key)
+                continue
+            
+            # 若沒有「取消」字眼，代表是正常的搶單確認，才點擊 Accept
+            accept_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定')]")
             for abtn in accept_btns:
                 if abtn.is_displayed():
                     safe_click(driver, abtn)
+                    print(f"[步驟 2] 👉 成功點擊彈窗【Accept】按鈕")
                     break
 
-            # ⚡ 高頻檢查結果 (不再死等 1.2 秒)
+            # ⚡ 高頻檢查結果
             for _ in range(15):
                 page_after = driver.find_element(By.TAG_NAME, "body").text
                 if "數量不足" in page_after:
@@ -170,8 +196,11 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                     break
                 time.sleep(0.1)
 
+        except TimeoutException:
+            print("[下單異常]: TimeoutException - 系統彈跳視窗未跳出，可能網頁反應延遲。")
         except Exception as e:
-            print(f"[下單異常]: {e}")
+            error_type = type(e).__name__
+            print(f"[下單異常]: {error_type} - {e}")
 
     return available_meals, success_orders
 
@@ -182,17 +211,15 @@ def main():
     if not username or not password:
         return
 
-    # ⚡ 效能最佳化啟動參數
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1280,800")
-    # 阻擋圖片與無用資源，極大化載入速度
     prefs = {"profile.managed_default_content_settings.images": 2, "profile.default_content_setting_values.notifications": 2}
     chrome_options.add_experimental_option("prefs", prefs)
-    chrome_options.page_load_strategy = 'eager' # 不等完整資源載入完畢即開始執行
+    chrome_options.page_load_strategy = 'eager' 
 
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -200,10 +227,10 @@ def main():
     try:
         login_eip(driver, username, password)
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 極速模式啟動中...")
+        print("⚡ 極速模式啟動中 (已載入防退訂保護)...")
 
         max_checks = 5000
-        check_interval = 1.5 # ⚡ 巡檢間隔從 5 秒降至 1.5 秒
+        check_interval = 1.5 
         last_notified_items = set()
         secured_dates = set()
 
