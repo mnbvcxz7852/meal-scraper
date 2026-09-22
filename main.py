@@ -122,7 +122,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         time.sleep(0.5) 
 
-        # 鎖定麵碗並點擊
+        # 鎖定麵碗並進行【視覺防禦】判定
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
             for d_elem in date_rows:
@@ -130,6 +130,31 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                     By.XPATH, 
                     "./ancestor::div[contains(@class, 'card-header') or contains(@class, 'header') or contains(@style, 'pink') or count(.//button | .//svg | .//img) >= 3][1]"
                 )
+                
+                # 🌟 視覺判定：讀取瀏覽器渲染的 CSS 背景色，檢查是否為黃色
+                is_yellow = driver.execute_script(r"""
+                    function isY(node) {
+                        if (!node) return false;
+                        var rgba = window.getComputedStyle(node).backgroundColor;
+                        var m = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                        if (m) {
+                            var r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
+                            // 黃色特徵：紅、綠色值高於 190，且藍色值明顯偏低
+                            return (r > 190 && g > 190 && (r - b > 15));
+                        }
+                        return false;
+                    }
+                    var elem = arguments[0];
+                    return isY(elem) || isY(elem.parentElement) || (elem.firstElementChild ? isY(elem.firstElementChild) : false);
+                """, row_container)
+
+                if is_yellow:
+                    print(f"⏩ [視覺判定] {date_str} 呈現黃色底（已有訂單），自動略過！")
+                    secured_dates.add(target_date_key)
+                    clicked_bowl = "SKIP"
+                    break
+
+                # 若不是黃色，正常點擊
                 clickables = row_container.find_elements(By.XPATH, ".//button | .//*[name()='svg'] | .//img | .//i | .//span[contains(@class, 'btn')]")
                 if len(clickables) >= 3:
                     if safe_click(driver, clickables[2]):
@@ -138,6 +163,9 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                         break
         except Exception:
             pass
+
+        if clicked_bowl == "SKIP":
+            continue
 
         if not clicked_bowl and date_str:
             try:
@@ -151,31 +179,24 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if not clicked_bowl:
             continue
 
-        # ⚡ 動態攔截彈窗與防退訂機制
+        # ⚡ 動態攔截彈窗與防退訂機制 (第二道防線)
         try:
             wait = WebDriverWait(driver, 3)
-            # 等待彈窗按鈕出現 (只要 Accept 或 Cancel 出現都算)
             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
             
-            time.sleep(0.3) # 給予 0.3 秒確保彈窗文字完成渲染
+            time.sleep(0.3) 
             modal_text = driver.find_element(By.TAG_NAME, "body").text
             
-            # 🛡️ 絕對防禦：如果是取消視窗，立刻關閉，絕對不按 Accept！
             if "是否取消" in modal_text or "確定要取消" in modal_text:
                 print(f"🛑 [防禦攔截] 發現 {date_str} 已有訂單 (跳出取消視窗)！立即中斷操作並關閉視窗。")
-                
-                # 點擊灰色的 Cancel 按鈕安全退出
                 cancel_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Cancel') or contains(text(), '取消')]")
                 for cbtn in cancel_btns:
                     if cbtn.is_displayed():
                         safe_click(driver, cbtn)
                         break
-                        
-                # 標記為已處理，未來輪詢直接跳過
                 secured_dates.add(target_date_key)
                 continue
             
-            # 若沒有「取消」字眼，代表是正常的搶單確認，才點擊 Accept
             accept_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定')]")
             for abtn in accept_btns:
                 if abtn.is_displayed():
@@ -183,7 +204,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                     print(f"[步驟 2] 👉 成功點擊彈窗【Accept】按鈕")
                     break
 
-            # ⚡ 高頻檢查結果
             for _ in range(15):
                 page_after = driver.find_element(By.TAG_NAME, "body").text
                 if "數量不足" in page_after:
@@ -227,7 +247,7 @@ def main():
     try:
         login_eip(driver, username, password)
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 極速模式啟動中 (已載入防退訂保護)...")
+        print("⚡ 極速模式啟動中 (已載入視覺防禦與彈窗防護)...")
 
         max_checks = 5000
         check_interval = 1.5 
