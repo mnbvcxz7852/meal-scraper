@@ -53,7 +53,7 @@ def login_eip(driver, username, password):
     login_url = "https://eip2.sag.tw/SAGWeb/pages/authentication/login-v1"
     driver.get(login_url)
     
-    # 🛡️ 放寬等待時間至 20 秒，適應 GitHub 偶發的網路延遲
+    # 🛡️ 初次登入放寬至 20 秒等待，避免 GitHub 偶發網路延遲
     wait = WebDriverWait(driver, 20)
     user_inputs = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "input[type='text'], input[name*='user'], input[id*='user']")))
     user_inputs[0].clear()
@@ -82,7 +82,9 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     except Exception:
         pass
     
-    time.sleep(0.4) 
+    # 🌟 關鍵修正：給予網頁 1.0 秒時間切換至麵食分頁並渲染 DOM，避免讀不到資料
+    time.sleep(1.0) 
+    
     body_text = driver.find_element(By.TAG_NAME, "body").text
     lines = [line.strip() for line in body_text.split("\n") if line.strip()]
 
@@ -123,7 +125,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         time.sleep(0.5) 
 
-        # 視覺防禦判定
+        # 🛡️ 視覺防禦判定（檢測黃色底色）
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
             for d_elem in date_rows:
@@ -177,7 +179,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if not clicked_bowl:
             continue
 
-        # 動態攔截彈窗與防退訂機制
+        # ⚡ 動態攔截彈窗與防退訂機制（防護第二道防線）
         try:
             wait = WebDriverWait(driver, 3)
             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
@@ -229,6 +231,7 @@ def main():
     if not username or not password:
         return
 
+    # ⚡ 效能最佳化啟動參數
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
@@ -260,7 +263,7 @@ def main():
             return
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 極速模式啟動中 (已加入初次登入保護與無盡巡檢)...")
+        print("⚡ 極速模式啟動中 (已加入所有安全防護與無盡巡檢)...")
 
         max_checks = 5000
         check_interval = 1.5 
@@ -270,6 +273,7 @@ def main():
         for i in range(1, max_checks + 1):
             now_str = datetime.now(TAIPEI_TZ).strftime("%H:%M:%S")
             
+            # 🛡️ 內部迴圈錯誤攔截（不死鳥防護）
             try:
                 driver.get(meal_url)
 
