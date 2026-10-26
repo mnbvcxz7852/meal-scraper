@@ -16,7 +16,7 @@ TAIPEI_TZ = timezone(timedelta(hours=8))
 
 # ==================== 🎯 搶單目標設定 ====================
 TARGET_KEYWORDS = [""]
-ALLOWED_DATES = ["11-02", "11-03", "11-04", "11-05", "11-06"] # 請依需求修改日期
+ALLOWED_DATES = ["11-02", "11-03", "11-04", "11-05", "11-06"] 
 # ========================================================
 
 def send_discord_push(text):
@@ -74,16 +74,41 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         noodle_tabs = WebDriverWait(driver, 2).until(
             EC.presence_of_all_elements_located((By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]"))
         )
+        clicked_tab = False
         for tab in noodle_tabs:
             if tab.is_displayed():
                 safe_click(driver, tab)
+                clicked_tab = True
                 break
+        if not clicked_tab and noodle_tabs:
+            safe_click(driver, noodle_tabs[0])
     except Exception:
         pass
     
     time.sleep(1.0) 
     
-    body_text = driver.find_element(By.TAG_NAME, "body").text
+    # 🌟 關鍵升級：使用 JS X光掃描，強制抓取被「折疊隱藏 (Collapse)」的菜單名額
+    body_text = driver.execute_script("""
+        function extractTextWithNewlines(el) {
+            let text = '';
+            for (let child of el.childNodes) {
+                if (child.nodeType === 3) { 
+                    text += child.nodeValue;
+                } else if (child.nodeType === 1) { 
+                    text += extractTextWithNewlines(child);
+                    let tag = child.tagName.toUpperCase();
+                    if (['DIV', 'TR', 'P', 'LI', 'BR'].includes(tag)) {
+                        text += '\\n';
+                    } else if (['TD', 'TH'].includes(tag)) {
+                        text += ' '; // 表格欄位用空白隔開，讓菜名與數量在同一行
+                    }
+                }
+            }
+            return text;
+        }
+        return extractTextWithNewlines(document.body);
+    """)
+    
     lines = [line.strip() for line in body_text.split("\n") if line.strip()]
 
     current_date = ""
@@ -97,6 +122,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if date_match:
             current_date = date_match.group(1)
             continue
+        
         match = re.search(r'(\d+)\s*$', cleaned)
         if match:
             quota = int(match.group(1))
@@ -123,7 +149,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         time.sleep(0.5) 
 
-        # 移除黃色底色視覺防禦，允許對已訂葷素的日期發動換餐攻擊
+        # 無論是否折疊，直接尋找該日期的麵碗圖示發動點擊
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
             for d_elem in date_rows:
@@ -153,7 +179,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if not clicked_bowl:
             continue
 
-        # ⚡ 升級版彈窗文字防禦：支援「自動換餐」
+        # ⚡ 彈窗文字防禦
         try:
             wait = WebDriverWait(driver, 3)
             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
@@ -161,7 +187,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
             time.sleep(0.3) 
             modal_text = driver.find_element(By.TAG_NAME, "body").text
             
-            # 如果是取消視窗，代表已經成功換到麵食，立刻攔截關閉
             if "取消" in modal_text:
                 print(f"🛑 [防禦攔截] 發現 {date_str} 已是【麵食】訂單！安全撤退並關閉視窗。")
                 cancel_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Cancel') or contains(text(), '取消')]")
@@ -172,7 +197,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                 secured_dates.add(target_date_key)
                 continue
             
-            # 如果是換餐（是否要改）或新訂單，一律點擊 Accept 搶單
             accept_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定')]")
             for abtn in accept_btns:
                 if abtn.is_displayed():
@@ -240,7 +264,7 @@ def main():
             return
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 換餐升級版啟動中 (支援騎驢找馬自動轉單)...")
+        print("⚡ X光透視版啟動中 (無視選單折疊隱藏)...")
 
         max_checks = 5000
         check_interval = 1.5 
