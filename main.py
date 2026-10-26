@@ -87,7 +87,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     
     time.sleep(1.0) 
     
-    # 🌟 關鍵升級：使用 JS X光掃描，強制抓取被「折疊隱藏 (Collapse)」的菜單名額
+    # 🌟 X光透視：強制讀取被隱藏/折疊的網頁底層文字
     body_text = driver.execute_script("""
         function extractTextWithNewlines(el) {
             let text = '';
@@ -100,7 +100,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                     if (['DIV', 'TR', 'P', 'LI', 'BR'].includes(tag)) {
                         text += '\\n';
                     } else if (['TD', 'TH'].includes(tag)) {
-                        text += ' '; // 表格欄位用空白隔開，讓菜名與數量在同一行
+                        text += ' '; 
                     }
                 }
             }
@@ -179,7 +179,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if not clicked_bowl:
             continue
 
-        # ⚡ 彈窗文字防禦
+        # ⚡ 彈窗文字防禦 (支援騎驢找馬換餐)
         try:
             wait = WebDriverWait(driver, 3)
             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
@@ -234,6 +234,7 @@ def main():
     if not username or not password:
         return
 
+    print("🚀 步驟 1: 正在初始化 Chrome 瀏覽器環境...")
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
@@ -246,8 +247,12 @@ def main():
 
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
+    
+    # 🌟 強制超時防禦：避免底層網路異常導致死等
+    driver.set_page_load_timeout(30)
 
     try:
+        print("🌐 步驟 2: 準備連線並登入 EIP 系統...")
         login_success = False
         for attempt in range(3):
             try:
@@ -256,7 +261,7 @@ def main():
                 break
             except Exception as e:
                 error_name = type(e).__name__
-                print(f"⚠️ 初次登入延遲/失敗 (嘗試 {attempt+1}/3): {error_name}... 3 秒後重試")
+                print(f"⚠️ 登入失敗或網頁載入逾時 (嘗試 {attempt+1}/3): {error_name}... 3 秒後重試")
                 time.sleep(3)
 
         if not login_success:
@@ -264,7 +269,7 @@ def main():
             return
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ X光透視版啟動中 (無視選單折疊隱藏)...")
+        print("⚡ 步驟 3: 終極完全體啟動中 (X光透視 + 自動換餐 + 無盡巡檢)...")
 
         max_checks = 5000
         check_interval = 1.5 
