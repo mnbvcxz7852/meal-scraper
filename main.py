@@ -70,8 +70,9 @@ def login_eip(driver, username, password):
     time.sleep(2)
 
 def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
+    # 切換麵食分頁
     try:
-        noodle_tabs = WebDriverWait(driver, 2).until(
+        noodle_tabs = WebDriverWait(driver, 3).until(
             EC.presence_of_all_elements_located((By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]"))
         )
         clicked_tab = False
@@ -85,9 +86,17 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     except Exception:
         pass
     
-    time.sleep(1.0) 
+    # 🌟 動態資料鎖定 (Smart Wait)：等待非同步的資料真的出現在畫面上，避免刷太快中斷載入
+    if allowed_dates:
+        try:
+            wait_xpath = " | ".join([f"//*[contains(text(), '{d}')]" for d in allowed_dates])
+            WebDriverWait(driver, 4).until(EC.presence_of_element_located((By.XPATH, wait_xpath)))
+        except:
+            pass
+            
+    time.sleep(1.0) # 給予前端框架渲染 DOM 的最終緩衝時間
     
-    # 🌟 X光透視：強制讀取被隱藏/折疊的網頁底層文字
+    # X光透視：強制讀取被隱藏/折疊的網頁底層文字
     body_text = driver.execute_script("""
         function extractTextWithNewlines(el) {
             let text = '';
@@ -116,23 +125,45 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     available_meals = []
     success_orders = []
 
+    last_text = ""
+    ignore_texts = ["菜名", "數量", "Name", "Quantity", "麵食", "素食", "葷食", "取消", "Accept", "Cancel", "確定", "是", "否"]
+
     for line in lines:
         cleaned = line.replace("∞", "").strip()
+        if not cleaned:
+            continue
+            
         date_match = re.search(r'(\d{2}-\d{2})\s*[一二三四五]', cleaned)
         if date_match:
             current_date = date_match.group(1)
+            last_text = ""
             continue
-        
-        match = re.search(r'(\d+)\s*$', cleaned)
-        if match:
-            quota = int(match.group(1))
-            meal_name = cleaned[:match.start()].strip()
-            if meal_name:
+            
+        if cleaned.isdigit():
+            quota = int(cleaned)
+            meal_name = last_text
+            if meal_name and meal_name not in ignore_texts:
                 parsed_items.append((current_date, meal_name, quota))
                 if quota > 0:
-                    # 👇 加上這行判斷：只有在 ALLOWED_DATES 裡的日期，才加入推播清單
                     if allowed_dates and any(allowed in current_date for allowed in allowed_dates):
                         available_meals.append((f"{current_date} {meal_name}", quota))
+            last_text = ""
+            continue
+            
+        match_same_line = re.search(r'\s+(\d+)\s*$', cleaned)
+        if match_same_line:
+            quota = int(match_same_line.group(1))
+            meal_name = cleaned[:match_same_line.start()].strip()
+            if meal_name and meal_name not in ignore_texts:
+                parsed_items.append((current_date, meal_name, quota))
+                if quota > 0:
+                    if allowed_dates and any(allowed in current_date for allowed in allowed_dates):
+                        available_meals.append((f"{current_date} {meal_name}", quota))
+            last_text = ""
+            continue
+            
+        if cleaned not in ignore_texts:
+            last_text = cleaned
 
     for date_str, meal_name, quota in parsed_items:
         if quota <= 0:
@@ -151,7 +182,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         time.sleep(0.5) 
 
-        # 無論是否折疊，直接尋找該日期的麵碗圖示發動點擊
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
             for d_elem in date_rows:
@@ -181,7 +211,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if not clicked_bowl:
             continue
 
-        # ⚡ 彈窗文字防禦 (支援騎驢找馬換餐)
         try:
             wait = WebDriverWait(driver, 3)
             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
@@ -250,7 +279,6 @@ def main():
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
     
-    # 🌟 強制超時防禦：避免底層網路異常導致死等
     driver.set_page_load_timeout(30)
 
     try:
@@ -271,7 +299,7 @@ def main():
             return
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 步驟 3: 終極完全體啟動中 (X光透視 + 自動換餐 + 無盡巡檢)...")
+        print("⚡ 步驟 3: 精準鎖定版啟動中 (動態資料鎖定 + 自動換餐)...")
 
         max_checks = 5000
         check_interval = 1.5 
@@ -279,49 +307,7 @@ def main():
         secured_dates = set()
 
         for i in range(1, max_checks + 1):
-            now_str = datetime.now(TAIPEI_TZ).strftime("%H:%M:%S")
-            
-            try:
-                driver.get(meal_url)
-
-                if "login" in driver.current_url.lower():
-                    print(f"[{now_str}] 偵測到登入狀態失效，嘗試重新登入...")
-                    login_eip(driver, username, password)
-                    driver.get(meal_url)
-
-                available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS, ALLOWED_DATES, secured_dates)
-
-                if success_orders:
-                    success_text = f"🎉 **【⚡ 搶單/換餐成功！】**\n時間：`{now_str}`\n已為您自動變更為：\n" + "\n".join([f"> 🍜 **{m}**" for m in success_orders])
-                    send_discord_push(success_text)
-
-                available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
-                current_set = set(available_desc)
-
-                if available_desc and current_set != last_notified_items:
-                    alert_text = f"🔥 **【名額釋出】**\n時間：`{now_str}`\n釋出項目：\n" + "\n".join([f"> {item}" for item in available_desc])
-                    send_discord_push(alert_text)
-                    last_notified_items = current_set
-                elif not available_desc:
-                    if i % 20 == 0:
-                        print(f"[{now_str}] 巡檢正常運作中... 第 {i}/{max_checks} 次")
-
-                time.sleep(check_interval)
-
-            except Exception as loop_e:
-                error_name = type(loop_e).__name__
-                print(f"[{now_str}] ⚠️ 第 {i} 次巡檢發生單次異常 ({error_name})，將於 3 秒後自動重試...")
-                time.sleep(3) 
-
-    except Exception as e:
-        print(f"❌ 嚴重異常，程式中止: {e}")
-        send_discord_push(f"⚠️ **訂餐搶單腳本嚴重異常**: `{e}`")
-    finally:
-        driver.quit()
-
-if __name__ == "__main__":
-    main()
-
+            now_str = datetime.now(TAIP
 
 # import os
 # import time
