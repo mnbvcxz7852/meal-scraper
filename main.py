@@ -70,26 +70,25 @@ def login_eip(driver, username, password):
     time.sleep(2)
 
 def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
-    # 1. 切換至麵食分頁
+    # 🌟 關鍵修復 1：強制等待 2 秒，確保網頁 JS 完全初始化，按鈕已具備點擊功能
+    time.sleep(2.0)
+    
+    # 切換至麵食分頁
     try:
-        noodle_tabs = WebDriverWait(driver, 3).until(
-            EC.presence_of_all_elements_located((By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]"))
-        )
-        clicked_tab = False
+        noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
         for tab in noodle_tabs:
             if tab.is_displayed():
+                # 雙重點擊確保觸發
                 safe_click(driver, tab)
-                clicked_tab = True
+                time.sleep(0.2)
+                safe_click(driver, tab)
                 break
-        if not clicked_tab and noodle_tabs:
-            safe_click(driver, noodle_tabs[0])
     except Exception:
         pass
     
-    # 🌟 關鍵修復：給予伺服器 1.5 秒的時間拉取麵食資料。確保畫面有數字才開始抓！
-    time.sleep(1.5) 
+    # 🌟 關鍵修復 2：點擊分頁後，等待 2 秒讓伺服器回傳麵食名額資料
+    time.sleep(2.0) 
     
-    # 🌟 回歸最完美的原始 Selenium 抓字法，不破壞排版格式
     body_text = driver.find_element(By.TAG_NAME, "body").text
     lines = [line.strip() for line in body_text.split("\n") if line.strip()]
 
@@ -112,7 +111,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
             if meal_name:
                 parsed_items.append((current_date, meal_name, quota))
                 if quota > 0:
-                    # 🌟 防干擾：只有在 ALLOWED_DATES 裡的日期，才會加入 Discord 名額推播清單
+                    # 過濾推播，只通知 ALLOWED_DATES 內的日期
                     if allowed_dates and any(allowed in current_date for allowed in allowed_dates):
                         available_meals.append((f"{current_date} {meal_name}", quota))
 
@@ -133,7 +132,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         time.sleep(0.5) 
 
-        # 無腦點擊該日期的第三個 icon (麵碗)
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
             for d_elem in date_rows:
@@ -163,7 +161,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if not clicked_bowl:
             continue
 
-        # ⚡ 彈窗防護：取消則撤退，要改或要訂則 Accept
+        # ⚡ 彈窗防護：支援新訂單與自動換餐
         try:
             wait = WebDriverWait(driver, 3)
             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
@@ -232,7 +230,6 @@ def main():
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
     
-    # 解決 3 分鐘死當的 30 秒斬斷機制
     driver.set_page_load_timeout(30)
 
     try:
@@ -253,7 +250,7 @@ def main():
             return
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 步驟 3: 返璞歸真．極致穩定版啟動中 (還原高速抓取 + 自動換餐 + 防干擾推播)...")
+        print("⚡ 步驟 3: 精準節奏版啟動中 (確保切換分頁 + 自動換餐 + 防干擾推播)...")
 
         max_checks = 5000
         check_interval = 1.5 
@@ -303,6 +300,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 # import os
 # import time
 # import re
