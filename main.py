@@ -70,7 +70,7 @@ def login_eip(driver, username, password):
     time.sleep(2)
 
 def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
-    # 切換麵食分頁
+    # 1. 切換至麵食分頁
     try:
         noodle_tabs = WebDriverWait(driver, 3).until(
             EC.presence_of_all_elements_located((By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]"))
@@ -86,38 +86,11 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     except Exception:
         pass
     
-    # 🌟 動態資料鎖定 (Smart Wait)：等待非同步的資料真的出現在畫面上，避免刷太快中斷載入
-    if allowed_dates:
-        try:
-            wait_xpath = " | ".join([f"//*[contains(text(), '{d}')]" for d in allowed_dates])
-            WebDriverWait(driver, 4).until(EC.presence_of_element_located((By.XPATH, wait_xpath)))
-        except:
-            pass
-            
-    time.sleep(1.0) # 給予前端框架渲染 DOM 的最終緩衝時間
+    # 🌟 關鍵修復：給予伺服器 1.5 秒的時間拉取麵食資料。確保畫面有數字才開始抓！
+    time.sleep(1.5) 
     
-    # X光透視：強制讀取被隱藏/折疊的網頁底層文字
-    body_text = driver.execute_script("""
-        function extractTextWithNewlines(el) {
-            let text = '';
-            for (let child of el.childNodes) {
-                if (child.nodeType === 3) { 
-                    text += child.nodeValue;
-                } else if (child.nodeType === 1) { 
-                    text += extractTextWithNewlines(child);
-                    let tag = child.tagName.toUpperCase();
-                    if (['DIV', 'TR', 'P', 'LI', 'BR'].includes(tag)) {
-                        text += '\\n';
-                    } else if (['TD', 'TH'].includes(tag)) {
-                        text += ' '; 
-                    }
-                }
-            }
-            return text;
-        }
-        return extractTextWithNewlines(document.body);
-    """)
-    
+    # 🌟 回歸最完美的原始 Selenium 抓字法，不破壞排版格式
+    body_text = driver.find_element(By.TAG_NAME, "body").text
     lines = [line.strip() for line in body_text.split("\n") if line.strip()]
 
     current_date = ""
@@ -125,45 +98,23 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     available_meals = []
     success_orders = []
 
-    last_text = ""
-    ignore_texts = ["菜名", "數量", "Name", "Quantity", "麵食", "素食", "葷食", "取消", "Accept", "Cancel", "確定", "是", "否"]
-
     for line in lines:
         cleaned = line.replace("∞", "").strip()
-        if not cleaned:
-            continue
-            
         date_match = re.search(r'(\d{2}-\d{2})\s*[一二三四五]', cleaned)
         if date_match:
             current_date = date_match.group(1)
-            last_text = ""
             continue
-            
-        if cleaned.isdigit():
-            quota = int(cleaned)
-            meal_name = last_text
-            if meal_name and meal_name not in ignore_texts:
+        
+        match = re.search(r'(\d+)\s*$', cleaned)
+        if match:
+            quota = int(match.group(1))
+            meal_name = cleaned[:match.start()].strip()
+            if meal_name:
                 parsed_items.append((current_date, meal_name, quota))
                 if quota > 0:
+                    # 🌟 防干擾：只有在 ALLOWED_DATES 裡的日期，才會加入 Discord 名額推播清單
                     if allowed_dates and any(allowed in current_date for allowed in allowed_dates):
                         available_meals.append((f"{current_date} {meal_name}", quota))
-            last_text = ""
-            continue
-            
-        match_same_line = re.search(r'\s+(\d+)\s*$', cleaned)
-        if match_same_line:
-            quota = int(match_same_line.group(1))
-            meal_name = cleaned[:match_same_line.start()].strip()
-            if meal_name and meal_name not in ignore_texts:
-                parsed_items.append((current_date, meal_name, quota))
-                if quota > 0:
-                    if allowed_dates and any(allowed in current_date for allowed in allowed_dates):
-                        available_meals.append((f"{current_date} {meal_name}", quota))
-            last_text = ""
-            continue
-            
-        if cleaned not in ignore_texts:
-            last_text = cleaned
 
     for date_str, meal_name, quota in parsed_items:
         if quota <= 0:
@@ -182,6 +133,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         time.sleep(0.5) 
 
+        # 無腦點擊該日期的第三個 icon (麵碗)
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
             for d_elem in date_rows:
@@ -211,6 +163,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if not clicked_bowl:
             continue
 
+        # ⚡ 彈窗防護：取消則撤退，要改或要訂則 Accept
         try:
             wait = WebDriverWait(driver, 3)
             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
@@ -279,6 +232,7 @@ def main():
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
     
+    # 解決 3 分鐘死當的 30 秒斬斷機制
     driver.set_page_load_timeout(30)
 
     try:
@@ -299,7 +253,7 @@ def main():
             return
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 步驟 3: 精準鎖定版啟動中 (動態資料鎖定 + 自動換餐)...")
+        print("⚡ 步驟 3: 返璞歸真．極致穩定版啟動中 (還原高速抓取 + 自動換餐 + 防干擾推播)...")
 
         max_checks = 5000
         check_interval = 1.5 
@@ -349,7 +303,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 # import os
 # import time
 # import re
