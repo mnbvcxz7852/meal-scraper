@@ -130,7 +130,9 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
             if meal_name:
                 parsed_items.append((current_date, meal_name, quota))
                 if quota > 0:
-                    available_meals.append((f"{current_date} {meal_name}", quota))
+                    # 👇 加上這行判斷：只有在 ALLOWED_DATES 裡的日期，才加入推播清單
+                    if allowed_dates and any(allowed in current_date for allowed in allowed_dates):
+                        available_meals.append((f"{current_date} {meal_name}", quota))
 
     for date_str, meal_name, quota in parsed_items:
         if quota <= 0:
