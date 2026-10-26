@@ -307,7 +307,48 @@ def main():
         secured_dates = set()
 
         for i in range(1, max_checks + 1):
-            now_str = datetime.now(TAIP
+            now_str = datetime.now(TAIPEI_TZ).strftime("%H:%M:%S")
+            
+            try:
+                driver.get(meal_url)
+
+                if "login" in driver.current_url.lower():
+                    print(f"[{now_str}] 偵測到登入狀態失效，嘗試重新登入...")
+                    login_eip(driver, username, password)
+                    driver.get(meal_url)
+
+                available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS, ALLOWED_DATES, secured_dates)
+
+                if success_orders:
+                    success_text = f"🎉 **【⚡ 搶單/換餐成功！】**\n時間：`{now_str}`\n已為您自動變更為：\n" + "\n".join([f"> 🍜 **{m}**" for m in success_orders])
+                    send_discord_push(success_text)
+
+                available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
+                current_set = set(available_desc)
+
+                if available_desc and current_set != last_notified_items:
+                    alert_text = f"🔥 **【名額釋出】**\n時間：`{now_str}`\n釋出項目：\n" + "\n".join([f"> {item}" for item in available_desc])
+                    send_discord_push(alert_text)
+                    last_notified_items = current_set
+                elif not available_desc:
+                    if i % 20 == 0:
+                        print(f"[{now_str}] 巡檢正常運作中... 第 {i}/{max_checks} 次")
+
+                time.sleep(check_interval)
+
+            except Exception as loop_e:
+                error_name = type(loop_e).__name__
+                print(f"[{now_str}] ⚠️ 第 {i} 次巡檢發生單次異常 ({error_name})，將於 3 秒後自動重試...")
+                time.sleep(3) 
+
+    except Exception as e:
+        print(f"❌ 嚴重異常，程式中止: {e}")
+        send_discord_push(f"⚠️ **訂餐搶單腳本嚴重異常**: `{e}`")
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+    main()
 
 # import os
 # import time
