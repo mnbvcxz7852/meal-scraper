@@ -1,3 +1,4 @@
+#高速搶單版本 實測結果搶完偵測還有30碗 經3周測試100%成功率
 import os
 import time
 import re
@@ -316,7 +317,7 @@ if __name__ == "__main__":
     main()
 
 
-
+#穩定搶單版本(選擇葷素食後可切換) 實測結果搶完偵測均剩1碗 經1周測試100%成功率 但速度稍微慢些 沒有高速版那麼快
 # import os
 # import time
 # import re
