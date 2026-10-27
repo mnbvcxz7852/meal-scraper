@@ -16,7 +16,7 @@ TAIPEI_TZ = timezone(timedelta(hours=8))
 
 # ==================== 🎯 搶單目標設定 ====================
 TARGET_KEYWORDS = [""]
-ALLOWED_DATES = ["11-03", "11-09", "11-10", "11-11", "11-12", "11-13"] 
+ALLOWED_DATES = ["11-16", "11-17", "11-18", "11-19", "11-20"]
 # ========================================================
 
 def send_discord_push(text):
@@ -53,6 +53,7 @@ def login_eip(driver, username, password):
     login_url = "https://eip2.sag.tw/SAGWeb/pages/authentication/login-v1"
     driver.get(login_url)
     
+    # 🛡️ 初次登入放寬至 20 秒等待，避免 GitHub 偶發網路延遲
     wait = WebDriverWait(driver, 20)
     user_inputs = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "input[type='text'], input[name*='user'], input[id*='user']")))
     user_inputs[0].clear()
@@ -70,24 +71,19 @@ def login_eip(driver, username, password):
     time.sleep(2)
 
 def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
-    # 🌟 關鍵修復 1：強制等待 2 秒，確保網頁 JS 完全初始化，按鈕已具備點擊功能
-    time.sleep(2.0)
-    
-    # 切換至麵食分頁
     try:
-        noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
+        noodle_tabs = WebDriverWait(driver, 2).until(
+            EC.presence_of_all_elements_located((By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]"))
+        )
         for tab in noodle_tabs:
             if tab.is_displayed():
-                # 雙重點擊確保觸發
-                safe_click(driver, tab)
-                time.sleep(0.2)
                 safe_click(driver, tab)
                 break
     except Exception:
         pass
     
-    # 🌟 關鍵修復 2：點擊分頁後，等待 2 秒讓伺服器回傳麵食名額資料
-    time.sleep(2.0) 
+    # 🌟 關鍵修正：給予網頁 1.0 秒時間切換至麵食分頁並渲染 DOM，避免讀不到資料
+    time.sleep(1.0) 
     
     body_text = driver.find_element(By.TAG_NAME, "body").text
     lines = [line.strip() for line in body_text.split("\n") if line.strip()]
@@ -103,7 +99,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if date_match:
             current_date = date_match.group(1)
             continue
-        
         match = re.search(r'(\d+)\s*$', cleaned)
         if match:
             quota = int(match.group(1))
@@ -111,9 +106,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
             if meal_name:
                 parsed_items.append((current_date, meal_name, quota))
                 if quota > 0:
-                    # 過濾推播，只通知 ALLOWED_DATES 內的日期
-                    if allowed_dates and any(allowed in current_date for allowed in allowed_dates):
-                        available_meals.append((f"{current_date} {meal_name}", quota))
+                    available_meals.append((f"{current_date} {meal_name}", quota))
 
     for date_str, meal_name, quota in parsed_items:
         if quota <= 0:
@@ -132,6 +125,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
 
         time.sleep(0.5) 
 
+        # 🛡️ 視覺防禦判定（檢測黃色底色）
         try:
             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
             for d_elem in date_rows:
@@ -140,6 +134,27 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                     "./ancestor::div[contains(@class, 'card-header') or contains(@class, 'header') or contains(@style, 'pink') or count(.//button | .//svg | .//img) >= 3][1]"
                 )
                 
+                is_yellow = driver.execute_script(r"""
+                    function isY(node) {
+                        if (!node) return false;
+                        var rgba = window.getComputedStyle(node).backgroundColor;
+                        var m = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                        if (m) {
+                            var r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
+                            return (r > 190 && g > 190 && (r - b > 15));
+                        }
+                        return false;
+                    }
+                    var elem = arguments[0];
+                    return isY(elem) || isY(elem.parentElement) || (elem.firstElementChild ? isY(elem.firstElementChild) : false);
+                """, row_container)
+
+                if is_yellow:
+                    print(f"⏩ [視覺判定] {date_str} 呈現黃色底（已有訂單），自動略過！")
+                    secured_dates.add(target_date_key)
+                    clicked_bowl = "SKIP"
+                    break
+
                 clickables = row_container.find_elements(By.XPATH, ".//button | .//*[name()='svg'] | .//img | .//i | .//span[contains(@class, 'btn')]")
                 if len(clickables) >= 3:
                     if safe_click(driver, clickables[2]):
@@ -148,6 +163,9 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                         break
         except Exception:
             pass
+
+        if clicked_bowl == "SKIP":
+            continue
 
         if not clicked_bowl and date_str:
             try:
@@ -161,7 +179,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if not clicked_bowl:
             continue
 
-        # ⚡ 彈窗防護：支援新訂單與自動換餐
+        # ⚡ 動態攔截彈窗與防退訂機制（防護第二道防線）
         try:
             wait = WebDriverWait(driver, 3)
             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
@@ -169,8 +187,8 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
             time.sleep(0.3) 
             modal_text = driver.find_element(By.TAG_NAME, "body").text
             
-            if "取消" in modal_text:
-                print(f"🛑 [防禦攔截] 發現 {date_str} 已是【麵食】訂單！安全撤退並關閉視窗。")
+            if "是否取消" in modal_text or "確定要取消" in modal_text:
+                print(f"🛑 [防禦攔截] 發現 {date_str} 已有訂單 (跳出取消視窗)！立即中斷操作並關閉視窗。")
                 cancel_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Cancel') or contains(text(), '取消')]")
                 for cbtn in cancel_btns:
                     if cbtn.is_displayed():
@@ -183,10 +201,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
             for abtn in accept_btns:
                 if abtn.is_displayed():
                     safe_click(driver, abtn)
-                    if "改" in modal_text:
-                        print(f"[步驟 2] 👉 成功點擊彈窗【Accept】按鈕 (自動換餐模式)")
-                    else:
-                        print(f"[步驟 2] 👉 成功點擊彈窗【Accept】按鈕 (新訂單模式)")
+                    print(f"[步驟 2] 👉 成功點擊彈窗【Accept】按鈕")
                     break
 
             for _ in range(15):
@@ -195,7 +210,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
                     print(f"❌ 搶單失敗：{date_str} 名額被極限秒殺。")
                     break
                 elif "吃麵" in page_after:
-                    print(f"🎉 搶單/換餐成功：{date_str} {meal_name}")
+                    print(f"🎉 搶單成功：{date_str} {meal_name}")
                     secured_dates.add(target_date_key)
                     success_orders.append(f"{date_str} {meal_name}")
                     break
@@ -216,7 +231,7 @@ def main():
     if not username or not password:
         return
 
-    print("🚀 步驟 1: 正在初始化 Chrome 瀏覽器環境...")
+    # ⚡ 效能最佳化啟動參數
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
@@ -229,11 +244,9 @@ def main():
 
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
-    
-    driver.set_page_load_timeout(30)
 
     try:
-        print("🌐 步驟 2: 準備連線並登入 EIP 系統...")
+        # 🛡️ 加入初次登入重試機制 (最多重試 3 次)
         login_success = False
         for attempt in range(3):
             try:
@@ -242,7 +255,7 @@ def main():
                 break
             except Exception as e:
                 error_name = type(e).__name__
-                print(f"⚠️ 登入失敗或網頁載入逾時 (嘗試 {attempt+1}/3): {error_name}... 3 秒後重試")
+                print(f"⚠️ 初次登入延遲/失敗 (嘗試 {attempt+1}/3): {error_name}... 3 秒後重試")
                 time.sleep(3)
 
         if not login_success:
@@ -250,7 +263,7 @@ def main():
             return
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 步驟 3: 精準節奏版啟動中 (確保切換分頁 + 自動換餐 + 防干擾推播)...")
+        print("⚡ 極速模式啟動中 (已加入所有安全防護與無盡巡檢)...")
 
         max_checks = 5000
         check_interval = 1.5 
@@ -260,6 +273,7 @@ def main():
         for i in range(1, max_checks + 1):
             now_str = datetime.now(TAIPEI_TZ).strftime("%H:%M:%S")
             
+            # 🛡️ 內部迴圈錯誤攔截（不死鳥防護）
             try:
                 driver.get(meal_url)
 
@@ -271,7 +285,7 @@ def main():
                 available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS, ALLOWED_DATES, secured_dates)
 
                 if success_orders:
-                    success_text = f"🎉 **【⚡ 搶單/換餐成功！】**\n時間：`{now_str}`\n已為您自動變更為：\n" + "\n".join([f"> 🍜 **{m}**" for m in success_orders])
+                    success_text = f"🎉 **【⚡ 極速搶單成功！】**\n時間：`{now_str}`\n已為您搶下：\n" + "\n".join([f"> 🍜 **{m}**" for m in success_orders])
                     send_discord_push(success_text)
 
                 available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
@@ -302,6 +316,7 @@ if __name__ == "__main__":
     main()
 
 
+
 # import os
 # import time
 # import re
@@ -320,7 +335,7 @@ if __name__ == "__main__":
 
 # # ==================== 🎯 搶單目標設定 ====================
 # TARGET_KEYWORDS = [""]
-# ALLOWED_DATES = ["11-02", "11-03", "11-04", "11-05", "11-06"]
+# ALLOWED_DATES = ["11-03", "11-09", "11-10", "11-11", "11-12", "11-13"] 
 # # ========================================================
 
 # def send_discord_push(text):
@@ -357,7 +372,6 @@ if __name__ == "__main__":
 #     login_url = "https://eip2.sag.tw/SAGWeb/pages/authentication/login-v1"
 #     driver.get(login_url)
     
-#     # 🛡️ 初次登入放寬至 20 秒等待，避免 GitHub 偶發網路延遲
 #     wait = WebDriverWait(driver, 20)
 #     user_inputs = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "input[type='text'], input[name*='user'], input[id*='user']")))
 #     user_inputs[0].clear()
@@ -375,19 +389,24 @@ if __name__ == "__main__":
 #     time.sleep(2)
 
 # def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
+#     # 🌟 關鍵修復 1：強制等待 2 秒，確保網頁 JS 完全初始化，按鈕已具備點擊功能
+#     time.sleep(2.0)
+    
+#     # 切換至麵食分頁
 #     try:
-#         noodle_tabs = WebDriverWait(driver, 2).until(
-#             EC.presence_of_all_elements_located((By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]"))
-#         )
+#         noodle_tabs = driver.find_elements(By.XPATH, "//*[text()='麵食' or contains(text(), '麵食')]")
 #         for tab in noodle_tabs:
 #             if tab.is_displayed():
+#                 # 雙重點擊確保觸發
+#                 safe_click(driver, tab)
+#                 time.sleep(0.2)
 #                 safe_click(driver, tab)
 #                 break
 #     except Exception:
 #         pass
     
-#     # 🌟 關鍵修正：給予網頁 1.0 秒時間切換至麵食分頁並渲染 DOM，避免讀不到資料
-#     time.sleep(1.0) 
+#     # 🌟 關鍵修復 2：點擊分頁後，等待 2 秒讓伺服器回傳麵食名額資料
+#     time.sleep(2.0) 
     
 #     body_text = driver.find_element(By.TAG_NAME, "body").text
 #     lines = [line.strip() for line in body_text.split("\n") if line.strip()]
@@ -403,6 +422,7 @@ if __name__ == "__main__":
 #         if date_match:
 #             current_date = date_match.group(1)
 #             continue
+        
 #         match = re.search(r'(\d+)\s*$', cleaned)
 #         if match:
 #             quota = int(match.group(1))
@@ -410,7 +430,9 @@ if __name__ == "__main__":
 #             if meal_name:
 #                 parsed_items.append((current_date, meal_name, quota))
 #                 if quota > 0:
-#                     available_meals.append((f"{current_date} {meal_name}", quota))
+#                     # 過濾推播，只通知 ALLOWED_DATES 內的日期
+#                     if allowed_dates and any(allowed in current_date for allowed in allowed_dates):
+#                         available_meals.append((f"{current_date} {meal_name}", quota))
 
 #     for date_str, meal_name, quota in parsed_items:
 #         if quota <= 0:
@@ -429,7 +451,6 @@ if __name__ == "__main__":
 
 #         time.sleep(0.5) 
 
-#         # 🛡️ 視覺防禦判定（檢測黃色底色）
 #         try:
 #             date_rows = driver.find_elements(By.XPATH, f"//*[contains(text(), '{date_str}')]")
 #             for d_elem in date_rows:
@@ -438,27 +459,6 @@ if __name__ == "__main__":
 #                     "./ancestor::div[contains(@class, 'card-header') or contains(@class, 'header') or contains(@style, 'pink') or count(.//button | .//svg | .//img) >= 3][1]"
 #                 )
                 
-#                 is_yellow = driver.execute_script(r"""
-#                     function isY(node) {
-#                         if (!node) return false;
-#                         var rgba = window.getComputedStyle(node).backgroundColor;
-#                         var m = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-#                         if (m) {
-#                             var r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
-#                             return (r > 190 && g > 190 && (r - b > 15));
-#                         }
-#                         return false;
-#                     }
-#                     var elem = arguments[0];
-#                     return isY(elem) || isY(elem.parentElement) || (elem.firstElementChild ? isY(elem.firstElementChild) : false);
-#                 """, row_container)
-
-#                 if is_yellow:
-#                     print(f"⏩ [視覺判定] {date_str} 呈現黃色底（已有訂單），自動略過！")
-#                     secured_dates.add(target_date_key)
-#                     clicked_bowl = "SKIP"
-#                     break
-
 #                 clickables = row_container.find_elements(By.XPATH, ".//button | .//*[name()='svg'] | .//img | .//i | .//span[contains(@class, 'btn')]")
 #                 if len(clickables) >= 3:
 #                     if safe_click(driver, clickables[2]):
@@ -467,9 +467,6 @@ if __name__ == "__main__":
 #                         break
 #         except Exception:
 #             pass
-
-#         if clicked_bowl == "SKIP":
-#             continue
 
 #         if not clicked_bowl and date_str:
 #             try:
@@ -483,7 +480,7 @@ if __name__ == "__main__":
 #         if not clicked_bowl:
 #             continue
 
-#         # ⚡ 動態攔截彈窗與防退訂機制（防護第二道防線）
+#         # ⚡ 彈窗防護：支援新訂單與自動換餐
 #         try:
 #             wait = WebDriverWait(driver, 3)
 #             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
@@ -491,8 +488,8 @@ if __name__ == "__main__":
 #             time.sleep(0.3) 
 #             modal_text = driver.find_element(By.TAG_NAME, "body").text
             
-#             if "是否取消" in modal_text or "確定要取消" in modal_text:
-#                 print(f"🛑 [防禦攔截] 發現 {date_str} 已有訂單 (跳出取消視窗)！立即中斷操作並關閉視窗。")
+#             if "取消" in modal_text:
+#                 print(f"🛑 [防禦攔截] 發現 {date_str} 已是【麵食】訂單！安全撤退並關閉視窗。")
 #                 cancel_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Cancel') or contains(text(), '取消')]")
 #                 for cbtn in cancel_btns:
 #                     if cbtn.is_displayed():
@@ -505,7 +502,10 @@ if __name__ == "__main__":
 #             for abtn in accept_btns:
 #                 if abtn.is_displayed():
 #                     safe_click(driver, abtn)
-#                     print(f"[步驟 2] 👉 成功點擊彈窗【Accept】按鈕")
+#                     if "改" in modal_text:
+#                         print(f"[步驟 2] 👉 成功點擊彈窗【Accept】按鈕 (自動換餐模式)")
+#                     else:
+#                         print(f"[步驟 2] 👉 成功點擊彈窗【Accept】按鈕 (新訂單模式)")
 #                     break
 
 #             for _ in range(15):
@@ -514,7 +514,7 @@ if __name__ == "__main__":
 #                     print(f"❌ 搶單失敗：{date_str} 名額被極限秒殺。")
 #                     break
 #                 elif "吃麵" in page_after:
-#                     print(f"🎉 搶單成功：{date_str} {meal_name}")
+#                     print(f"🎉 搶單/換餐成功：{date_str} {meal_name}")
 #                     secured_dates.add(target_date_key)
 #                     success_orders.append(f"{date_str} {meal_name}")
 #                     break
@@ -535,7 +535,7 @@ if __name__ == "__main__":
 #     if not username or not password:
 #         return
 
-#     # ⚡ 效能最佳化啟動參數
+#     print("🚀 步驟 1: 正在初始化 Chrome 瀏覽器環境...")
 #     chrome_options = Options()
 #     chrome_options.add_argument("--headless=new")
 #     chrome_options.add_argument("--no-sandbox")
@@ -548,9 +548,11 @@ if __name__ == "__main__":
 
 #     service = Service(ChromeDriverManager().install())
 #     driver = webdriver.Chrome(service=service, options=chrome_options)
+    
+#     driver.set_page_load_timeout(30)
 
 #     try:
-#         # 🛡️ 加入初次登入重試機制 (最多重試 3 次)
+#         print("🌐 步驟 2: 準備連線並登入 EIP 系統...")
 #         login_success = False
 #         for attempt in range(3):
 #             try:
@@ -559,7 +561,7 @@ if __name__ == "__main__":
 #                 break
 #             except Exception as e:
 #                 error_name = type(e).__name__
-#                 print(f"⚠️ 初次登入延遲/失敗 (嘗試 {attempt+1}/3): {error_name}... 3 秒後重試")
+#                 print(f"⚠️ 登入失敗或網頁載入逾時 (嘗試 {attempt+1}/3): {error_name}... 3 秒後重試")
 #                 time.sleep(3)
 
 #         if not login_success:
@@ -567,7 +569,7 @@ if __name__ == "__main__":
 #             return
 
 #         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-#         print("⚡ 極速模式啟動中 (已加入所有安全防護與無盡巡檢)...")
+#         print("⚡ 步驟 3: 精準節奏版啟動中 (確保切換分頁 + 自動換餐 + 防干擾推播)...")
 
 #         max_checks = 5000
 #         check_interval = 1.5 
@@ -577,7 +579,6 @@ if __name__ == "__main__":
 #         for i in range(1, max_checks + 1):
 #             now_str = datetime.now(TAIPEI_TZ).strftime("%H:%M:%S")
             
-#             # 🛡️ 內部迴圈錯誤攔截（不死鳥防護）
 #             try:
 #                 driver.get(meal_url)
 
@@ -589,7 +590,7 @@ if __name__ == "__main__":
 #                 available_meals, success_orders = check_and_auto_order(driver, TARGET_KEYWORDS, ALLOWED_DATES, secured_dates)
 
 #                 if success_orders:
-#                     success_text = f"🎉 **【⚡ 極速搶單成功！】**\n時間：`{now_str}`\n已為您搶下：\n" + "\n".join([f"> 🍜 **{m}**" for m in success_orders])
+#                     success_text = f"🎉 **【⚡ 搶單/換餐成功！】**\n時間：`{now_str}`\n已為您自動變更為：\n" + "\n".join([f"> 🍜 **{m}**" for m in success_orders])
 #                     send_discord_push(success_text)
 
 #                 available_desc = [f"🍜 {m} (剩餘: {q})" for m, q in available_meals]
@@ -618,3 +619,5 @@ if __name__ == "__main__":
 
 # if __name__ == "__main__":
 #     main()
+
+
