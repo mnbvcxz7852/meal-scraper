@@ -269,16 +269,23 @@ def main():
             return
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 極速模式啟動中 (已加入所有安全防護與無縫巡檢)...")
+        print("⚡ 極速模式啟動中 (已加入計時安全下班與無縫巡檢)...")
 
-        # 🌟 擴充至 6500 次（約可跑 5 小時），確保撐滿 270 分鐘直到下一班排程接手
-        max_checks = 6500
+        max_checks = 99999
+        max_duration_seconds = 5 * 3600  # 🌟 設定跑滿 5 小時 (18000 秒) 主動安全下班，拿綠色勾勾
+        start_time = time.time()
+        
         check_interval = 1.5 
         last_notified_items = set()
         secured_dates = set()
 
         for i in range(1, max_checks + 1):
             now_str = datetime.now(TAIPEI_TZ).strftime("%H:%M:%S")
+            
+            # 🌟 檢查是否已跑滿 5 小時，若是則主動優雅退出，不讓 GitHub 強制斷電報錯
+            if time.time() - start_time >= max_duration_seconds:
+                print(f"[{now_str}] ✅ 已連續執行滿 5 小時（共巡檢 {i-1} 次），安全交棒給下一班排程！")
+                break
             
             # 🛡️ 內部迴圈錯誤攔截（不死鳥防護）
             try:
