@@ -2,15 +2,14 @@ name: Run Meal Scraper
 
 on:
   schedule:
-    # 避開整點尖峰，改於 15 分觸發，每 4 小時無縫循環一輪
-    # 對應台灣時間: 04:15, 08:15, 12:15, 16:15, 20:15, 00:15
-    - cron: '15 0,4,8,12,16,20 * * *'
+    # 改為每 3 小時觸發一次 (避開整點與 15 分，改用冷門的 23 分)
+    - cron: '23 0,3,6,9,12,15,18,21 * * *'
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 270 # 限制單次最長 4.5 小時，確保與下一輪重疊交接
+    timeout-minutes: 350 # 拉高至 5 小時 50 分鐘作為最終防線
 
     steps:
       - name: 簽出程式碼
