@@ -1,0 +1,35 @@
+name: Run Meal Scraper (哨兵 B)
+
+on:
+  schedule:
+    # B 哨兵：每 8 小時一班，與 A 哨兵錯開 4 小時 (UTC 時間 04:15, 12:15, 20:15)
+    # 對應台灣時間: 12:15, 20:15, 04:15 (每班跑 5 小時，至 17:15, 01:15, 09:15 退場)
+    - cron: '15 4,12,20 * * *'
+  workflow_dispatch:
+
+jobs:
+  scrape_b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350 # 5 小時 50 分鐘最終防線
+
+    steps:
+      - name: 簽出程式碼
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安裝 Python 套件
+        run: |
+          pip install -r requirements.txt
+
+      - name: 執行高頻名額監控 (哨兵 B)
+        env:
+          PYTHONUNBUFFERED: "1"
+          EIP_USER: ${{ secrets.EIP_USER }}
+          EIP_PASS: ${{ secrets.EIP_PASS }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python main.py
