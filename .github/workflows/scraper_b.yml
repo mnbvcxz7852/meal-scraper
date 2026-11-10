@@ -4,13 +4,13 @@ on:
   schedule:
     # B 哨兵：每 8 小時一班，與 A 哨兵錯開 4 小時 (UTC 時間 04:15, 12:15, 20:15)
     # 對應台灣時間: 12:15, 20:15, 04:15 (每班跑 5 小時，至 17:15, 01:15, 09:15 退場)
-    - cron: '15 4,12,20 * * *'
+    - cron: '37 4,12,20 * * *'
   workflow_dispatch:
 
 jobs:
   scrape_b:
     runs-on: ubuntu-latest
-    timeout-minutes: 350 # 5 小時 50 分鐘最終防線
+    timeout-minutes: 355 # 5 小時 50 分鐘最終防線
 
     steps:
       - name: 簽出程式碼
