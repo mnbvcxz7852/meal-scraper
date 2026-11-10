@@ -272,7 +272,7 @@ def main():
         print("⚡ 極速模式啟動中 (已加入計時安全下班與無縫巡檢)...")
 
         max_checks = 99999
-        max_duration_seconds = 5 * 3600  # 🌟 設定跑滿 5 小時 (18000 秒) 主動安全下班，拿綠色勾勾
+        max_duration_seconds = 5.7 * 3600  # 🌟 設定跑滿 5 小時 (18000 秒) 主動安全下班，拿綠色勾勾
         start_time = time.time()
         
         check_interval = 1.5 
