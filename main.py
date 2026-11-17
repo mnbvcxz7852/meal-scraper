@@ -1,4 +1,4 @@
-# 高速搶單版本 (無縫交接強化版) - 實測結果搶完偵測還有30碗 經3周測試100%成功率
+# 高速搶單版本 (雙哨兵無縫交接 + 重登修復版)
 import os
 import time
 import re
@@ -52,9 +52,15 @@ def safe_click(driver, element):
 
 def login_eip(driver, username, password):
     login_url = "https://eip2.sag.tw/SAGWeb/pages/authentication/login-v1"
+    
+    # 🌟 關鍵修復 1：重登前先徹底清除過期的舊 Cookie，防止 Session 衝突卡死
+    try:
+        driver.delete_all_cookies()
+    except Exception:
+        pass
+
     driver.get(login_url)
     
-    # 🛡️ 初次登入放寬至 20 秒等待，避免 GitHub 偶發網路延遲
     wait = WebDriverWait(driver, 20)
     user_inputs = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "input[type='text'], input[name*='user'], input[id*='user']")))
     user_inputs[0].clear()
@@ -69,7 +75,13 @@ def login_eip(driver, username, password):
         if any(w in btn.text for w in ["登入", "Login"]) or btn.get_attribute("type") == "submit":
             safe_click(driver, btn)
             break
-    time.sleep(2)
+            
+    # 🌟 關鍵修復 2：動態等待網址跳離 login 頁面（最長等 10 秒），確保伺服器已核發新憑證才放行
+    for _ in range(20):
+        time.sleep(0.5)
+        if "login" not in driver.current_url.lower():
+            break
+    time.sleep(1.0) # 給予瀏覽器寫入 Cookie 的最終緩衝
 
 def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     try:
@@ -83,7 +95,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
     except Exception:
         pass
     
-    # 🌟 維持高速版 1.0 秒黃金節奏
+    # 維持高速版 1.0 秒黃金節奏
     time.sleep(1.0) 
     
     body_text = driver.find_element(By.TAG_NAME, "body").text
@@ -107,7 +119,6 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
             if meal_name:
                 parsed_items.append((current_date, meal_name, quota))
                 if quota > 0:
-                    # 🌟 過濾非目標日期的推播通知
                     if not allowed_dates or any(allowed in current_date for allowed in allowed_dates):
                         available_meals.append((f"{current_date} {meal_name}", quota))
 
@@ -182,7 +193,7 @@ def check_and_auto_order(driver, targets, allowed_dates, secured_dates):
         if not clicked_bowl:
             continue
 
-        # ⚡ 動態攔截彈窗與防退訂機制（防護第二道防線）
+        # ⚡ 動態攔截彈窗與防退訂機制
         try:
             wait = WebDriverWait(driver, 3)
             wait.until(EC.presence_of_all_elements_located((By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), '確定') or contains(text(), 'Cancel')]")))
@@ -234,7 +245,6 @@ def main():
     if not username or not password:
         return
 
-    # ⚡ 效能最佳化啟動參數
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
@@ -247,12 +257,9 @@ def main():
 
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
-    
-    # 🌟 關鍵保護：限制單次網頁載入最長 30 秒，防止無盡卡死
     driver.set_page_load_timeout(30)
 
     try:
-        # 🛡️ 加入初次登入重試機制 (最多重試 3 次)
         login_success = False
         for attempt in range(3):
             try:
@@ -269,10 +276,10 @@ def main():
             return
 
         meal_url = "https://eip2.sag.tw/SAGWeb/SAG/BookMeal"
-        print("⚡ 極速模式啟動中 (已加入計時安全下班與無縫巡檢)...")
+        print("⚡ 極速模式啟動中 (已加入重登修復與計時安全下班)...")
 
         max_checks = 99999
-        max_duration_seconds = 5.7 * 3600  # 🌟 設定跑滿 5 小時 (18000 秒) 主動安全下班，拿綠色勾勾
+        max_duration_seconds = int(5.5 * 3600)  # 🌟 跑滿 5.5 小時主動安全下班，拿綠色勾勾
         start_time = time.time()
         
         check_interval = 1.5 
@@ -282,12 +289,10 @@ def main():
         for i in range(1, max_checks + 1):
             now_str = datetime.now(TAIPEI_TZ).strftime("%H:%M:%S")
             
-            # 🌟 檢查是否已跑滿 5 小時，若是則主動優雅退出，不讓 GitHub 強制斷電報錯
             if time.time() - start_time >= max_duration_seconds:
-                print(f"[{now_str}] ✅ 已連續執行滿 5 小時（共巡檢 {i-1} 次），安全交棒給下一班排程！")
+                print(f"[{now_str}] ✅ 已連續執行滿 5.5 小時（共巡檢 {i-1} 次），安全交棒給下一班排程！")
                 break
             
-            # 🛡️ 內部迴圈錯誤攔截（不死鳥防護）
             try:
                 driver.get(meal_url)
 
@@ -311,7 +316,7 @@ def main():
                     last_notified_items = current_set
                 elif not available_desc:
                     if i % 20 == 0:
-                        print(f"[{now_str}] 巡檢正常運作中... 第 {i}/{max_checks} 次")
+                        print(f"[{now_str}] 巡檢正常運作中... 第 {i} 次")
 
                 time.sleep(check_interval)
 
