@@ -25,7 +25,7 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: 執行高頻名額監控 (哨兵 B)
+      - name: 執行高頻名額監控 (哨兵 C)
         env:
           PYTHONUNBUFFERED: "1"
           EIP_USER: ${{ secrets.EIP_USER }}
